@@ -107,7 +107,7 @@ export default function GestionArribosSAP() {
             className={`px-6 py-3.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 shadow-sm border ${filtroConArribo ? 'bg-blue-600 text-white border-blue-700' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}
           >
             <PackageCheck size={18}/>
-            {filtroConArribo ? "VIENDO SOLO EN TRÁNSITO" : "VER TODO EL MAESTRO"}
+            {filtroConArribo ? "CÓDIGOS EN TRÁNSITO" : "VER TODO EL MAESTRO"}
           </button>
         </div>
 
@@ -115,7 +115,7 @@ export default function GestionArribosSAP() {
           {loading ? (
              <div className="p-20 text-center flex flex-col items-center gap-4">
                <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-               <p className="font-black text-slate-400 uppercase tracking-widest text-sm">Sincronizando con Servidor SAP...</p>
+               <p className="font-black text-slate-400 uppercase tracking-widest text-sm">Sincronizando con Servidor Supabase...</p>
              </div>
           ) : (
             <div className="overflow-x-auto max-h-[650px] custom-scrollbar">
@@ -123,8 +123,8 @@ export default function GestionArribosSAP() {
                 <thead>
                   <tr className="bg-slate-100 text-slate-600 font-bold uppercase text-[10px] sticky top-0 z-10 border-b border-slate-300">
                     <th className="p-4 w-20 text-center">Editar</th>
-                    <th className="p-4">SKU Material</th>
-                    <th className="p-4 w-1/3">Descripción Comercial</th>
+                    <th className="p-4">Código</th>
+                    <th className="p-4 w-1/3">Descripción</th>
                     <th className="p-4 text-center">Stock Actual</th>
                     <th className="p-4 text-center bg-blue-50 text-blue-800">Cantidad Arribo</th>
                     <th className="p-4 text-center bg-blue-50 text-blue-800">Fecha ETA (Arribo)</th>

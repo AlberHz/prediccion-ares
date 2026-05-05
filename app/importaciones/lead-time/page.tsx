@@ -95,7 +95,7 @@ export default function ModuloLeadTime() {
           </div>
           <div>
             <h1 className="text-xl font-black tracking-tighter uppercase text-white">Gestión de Lead Times</h1>
-            <p className="text-[10px] text-blue-400 font-bold uppercase tracking-[0.2em]">Configuración de Tiempos de Tránsito Logístico</p>
+            <p className="text-[10px] text-blue-400 font-bold uppercase tracking-[0.2em]">Configuración de Tiempos de Tránsito</p>
           </div>
         </div>
         <button onClick={fetchData} className="p-2.5 bg-white/5 hover:bg-white/10 rounded-lg border border-white/10 transition-all">
@@ -120,7 +120,7 @@ export default function ModuloLeadTime() {
           {loading ? (
             <div className="p-20 text-center flex flex-col items-center gap-4">
               <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-              <p className="font-black text-slate-400 uppercase tracking-widest text-sm">Cargando datos maestros...</p>
+              <p className="font-black text-slate-400 uppercase tracking-widest text-sm">Cargando datos de Supabase...</p>
             </div>
           ) : (
             <div className="overflow-x-auto max-h-[650px] custom-scrollbar">
@@ -128,9 +128,9 @@ export default function ModuloLeadTime() {
                 <thead>
                   <tr className="bg-slate-100 text-slate-600 font-bold uppercase text-[10px] sticky top-0 z-10 border-b border-slate-300">
                     <th className="p-4 w-20 text-center">Editar</th>
-                    <th className="p-4">SKU Material</th>
+                    <th className="p-4">Código</th>
                     <th className="p-4 w-1/3">Descripción</th>
-                    <th className="p-4 text-center">Stock</th>
+                    <th className="p-4 text-center">Stock Actual</th>
                     <th className="p-4 text-center bg-blue-50 text-blue-800 italic">Lead Time (Días)</th>
                     <th className="p-4 text-center">Status</th>
                   </tr>
@@ -195,7 +195,7 @@ export default function ModuloLeadTime() {
 
             <div className="p-8 space-y-6">
               <div className="bg-slate-50 p-5 rounded-3xl border border-slate-100">
-                <p className="text-[10px] font-black text-slate-400 uppercase mb-1">Producto SAP</p>
+                <p className="text-[10px] font-black text-slate-400 uppercase mb-1">CódigoP</p>
                 <h4 className="font-black text-slate-800 text-xl tracking-tighter">{itemSeleccionado?.codigo}</h4>
                 <p className="text-[10px] text-slate-500 font-bold uppercase truncate italic">{itemSeleccionado?.descripcion}</p>
               </div>
@@ -223,7 +223,7 @@ export default function ModuloLeadTime() {
                 className="flex-[2] bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-blue-200 transition-all flex items-center justify-center gap-2"
               >
                 {isSaving ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
-                Confirmar SAP
+                Confirmar
               </button>
             </div>
           </div>

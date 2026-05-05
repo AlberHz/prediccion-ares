@@ -11,19 +11,19 @@ export default function Home() {
   const modulos = [
     { 
       nombre: "IMPORTACIONES", 
-      ruta: "/importaciones", 
+      ruta: "/importaciones/predicciones", 
       icono: <Box size={28} />, 
       info: "Gestión de suministro internacional, Gestiòn de los Lead times, colocaciòn de fechas y cantidades de arribos y modificacion de los consumos promedios." 
     },
     { 
       nombre: "MATERIA PRIMA", 
-      ruta: "/materia-prima", 
+      ruta: "/materia-prima/predicciones", 
       icono: <Cpu size={28} />, 
       info: "Gestiòn del suministro local, Planeaciòn de insumos criticos y modificaciones de los aspectos basicos del abastecimiento." 
     },
     { 
       nombre: "SUMINISTROS", 
-      ruta: "/suministros", 
+      ruta: "/suministros/predicciones", 
       icono: <Package size={28} />, 
       info: "Administración de materiales indirectos, consumibles y stock de operación." 
     },

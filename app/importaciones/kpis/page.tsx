@@ -2,21 +2,13 @@
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
-  AlertCircle, Ship, Package, RefreshCw, Activity, 
-  PieChart, Tag, Calendar, ChevronDown, ChevronUp, 
-  ShoppingCart, Box, BarChart3, Filter,
-  TrendingDown, ListChecks, ArrowUpRight, Search,
-  Clock, CheckCircle2, AlertTriangle, Info,
-  TrendingUp, Layers, HardDrive, Globe
+  AlertCircle, Ship, Package, RefreshCw, 
+  PieChart, Calendar, ChevronDown, ChevronUp, 
+  ShoppingCart, TrendingDown, ArrowUpRight, 
+  Layers, HardDrive, Globe
 } from "lucide-react";
 
 // --- COMPONENTES ATÓMICOS DE UI ---
-
-const FioriBadge = ({ label, color }: { label: string, color: string }) => (
-  <span className={`px-2 py-0.5 rounded-sm text-[10px] font-bold uppercase border ${color}`}>
-    {label}
-  </span>
-);
 
 const KPIStatusCard = ({ title, value, subtitle, icon: Icon, colorClass, loading }: any) => (
   <div className={`bg-white border-b-4 ${colorClass} p-5 shadow-sm hover:shadow-md transition-all group relative overflow-hidden`}>
@@ -51,8 +43,6 @@ export default function DashboardLogisticoMaster() {
   const [arribos, setArribos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedMonth, setExpandedMonth] = useState<number | null>(1);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [filterFamilia, setFilterFamilia] = useState("TODAS");
 
   useEffect(() => {
     fetchData();
@@ -84,29 +74,29 @@ export default function DashboardLogisticoMaster() {
   const analytics = useMemo(() => {
     if (!data.length) return null;
 
-    // 1. FILTRADO BASE
-    const filteredBase = data.filter(p => {
-      const matchesSearch = p.codigo?.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                           p.descripcion?.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesFamilia = filterFamilia === "TODAS" || p.familia === filterFamilia;
-      return matchesSearch && matchesFamilia;
-    });
+    // 1. FILTRO MAESTRO: Solo códigos activos (Soporta boolean true, 1, o string "true"/"si")
+    const activeData = data.filter(p => 
+      p.activo === true || 
+      String(p.activo).toLowerCase() === "true" || 
+      p.activo === 1 || 
+      String(p.activo).toLowerCase() === "si"
+    );
 
-    // 2. LÓGICA "COMPRAR YA" (Stock < 0.5 mes de venta o Estado explícito)
-    const productosComprarYa = data.filter(p => p.estado === "COMPRAR YA");
+    // 2. LÓGICA "COMPRAR YA"
+    const productosComprarYa = activeData.filter(p => String(p.estado).trim().toUpperCase() === "COMPRAR YA");
     const gestionUrgenteCount = productosComprarYa.length;
 
-    // 3. QUIEBRES FUTUROS EXCLUYENTES (PIRÁMIDE DE RIESGO)
+    // 3. QUIEBRES FUTUROS EXCLUYENTES (PIRÁMIDE DE RIESGO - 6 MESES)
     const getQuiebresExcluyentes = () => {
       let yaAsignados = new Set();
-      const meses = [1, 2, 3, 4, 5];
+      const meses = [1, 2, 3, 4, 5, 6]; // Expandido a 6 meses
       const resultado: any = {};
 
       meses.forEach(m => {
-        const quiebranEnEsteMes = data.filter(p => {
+        const quiebranEnEsteMes = activeData.filter(p => {
           if (yaAsignados.has(p.codigo)) return false;
-          const stock = Number(p.stock) || 0;
-          const vta = Number(p.promedio_mensual) || 0;
+          const stock = parseFloat(p.stock) || 0;
+          const vta = parseFloat(p.promedio_mensual) || 0;
           const quiebra = stock < (vta * m);
           if (quiebra) yaAsignados.add(p.codigo);
           return quiebra;
@@ -118,34 +108,52 @@ export default function DashboardLogisticoMaster() {
 
     const quiebresMensuales = getQuiebresExcluyentes();
 
-    // 4. CLASIFICACIÓN ABC (PARETO 80/15/5)
-    const totalSalidas = data.reduce((acc, p) => acc + (Number(p.promedio_mensual) || 0), 0);
-    const sortedABC = [...data]
-      .sort((a, b) => (Number(b.promedio_mensual) || 0) - (Number(a.promedio_mensual) || 0))
+    // 4. CÁLCULO DE SALIDAS HISTÓRICAS (Sumatoria de columnas de meses: s25_ene, s26_mayo, etc.)
+    const dataConSalidas = activeData.map(p => {
+      let totalSalidasCalculado = 0;
+      let hasMonthCols = false;
+      
+      // Busca dinámicamente cualquier columna que empiece con "s" y dos dígitos (ej. s25_ene)
+      Object.keys(p).forEach(key => {
+        if (/^s\d{2}_/i.test(key)) {
+          totalSalidasCalculado += parseFloat(p[key]) || 0;
+          hasMonthCols = true;
+        }
+      });
+
+      return {
+        ...p,
+        total_salidas_historicas: hasMonthCols ? totalSalidasCalculado : (parseFloat(p.promedio_mensual) || 0)
+      };
+    });
+
+    // 5. CLASIFICACIÓN ABC BASADO EN TOTAL DE SALIDAS (PARETO 80/15/5)
+    const totalSalidasGlobal = dataConSalidas.reduce((acc, p) => acc + p.total_salidas_historicas, 0);
+    const sortedABC = [...dataConSalidas]
+      .sort((a, b) => b.total_salidas_historicas - a.total_salidas_historicas)
       .reduce((acc: any[], p, i) => {
-        const vtaVal = Number(p.promedio_mensual) || 0;
+        const vtaVal = p.total_salidas_historicas;
         const acumuladoAnterior = acc.length > 0 ? acc[acc.length - 1].acum : 0;
         const actualAcum = acumuladoAnterior + vtaVal;
-        const pctAcum = totalSalidas > 0 ? (actualAcum / totalSalidas) * 100 : 0;
+        const pctAcum = totalSalidasGlobal > 0 ? (actualAcum / totalSalidasGlobal) * 100 : 0;
         
         acc.push({
           ...p,
           clase: pctAcum <= 80 ? "A" : pctAcum <= 95 ? "B" : "C",
           acum: actualAcum,
-          peso: totalSalidas > 0 ? (vtaVal / totalSalidas) * 100 : 0
+          peso: totalSalidasGlobal > 0 ? (vtaVal / totalSalidasGlobal) * 100 : 0
         });
         return acc;
       }, []);
 
-    // 5. DENSIDAD POR FAMILIA
+    // 6. DENSIDAD POR FAMILIA (Sobre data activa)
     const famMap = new Map();
-    data.forEach(p => {
+    activeData.forEach(p => {
       const f = p.familia || "SIN FAMILIA";
-      if (!famMap.has(f)) famMap.set(f, { total: 0, activos: 0, vtaTotal: 0 });
+      if (!famMap.has(f)) famMap.set(f, { total: 0, activos: 0 });
       const stats = famMap.get(f);
       stats.total += 1;
-      stats.vtaTotal += Number(p.promedio_mensual) || 0;
-      if ((Number(p.stock) || 0) > 0) stats.activos += 1;
+      if ((parseFloat(p.stock) || 0) > 0) stats.activos += 1;
     });
 
     const familiaStats = Array.from(famMap.entries()).map(([name, stats]) => ({
@@ -155,21 +163,24 @@ export default function DashboardLogisticoMaster() {
     })).sort((a, b) => b.total - a.total);
 
     return {
-      filteredBase,
-      productosComprarYa,
+      activeData,
       gestionUrgenteCount,
       quiebresMensuales,
       sortedABC,
       familiaStats,
-      stockTotal: data.reduce((acc, p) => acc + (Number(p.stock) || 0), 0),
-      familiasUnicas: Array.from(new Set(data.map(p => p.familia))).filter(Boolean)
+      stockTotal: activeData.reduce((acc, p) => acc + (parseFloat(p.stock) || 0), 0)
     };
-  }, [data, searchTerm, filterFamilia]);
+  }, [data]);
+
+  // 7. PIPELINE LOGÍSTICO: Filtra arribos que realmente tengan datos
+  const arribosActivos = useMemo(() => {
+    return arribos.filter(a => parseFloat(a.arribo) > 0);
+  }, [arribos]);
 
   return (
     <div className="min-h-screen bg-[#f3f4f6] text-[#32363a] font-sans">
       
-      {/* BARRA DE ESTADO SUPERIOR (SHELL BAR) */}
+      {/* BARRA DE ESTADO SUPERIOR (SHELL BAR LIMPIA) */}
       <nav className="h-12 bg-[#354a5f] text-white flex items-center justify-between px-6 shadow-md sticky top-0 z-50">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2">
@@ -178,18 +189,12 @@ export default function DashboardLogisticoMaster() {
             </div>
             <span className="font-bold tracking-tight text-sm uppercase">Logistics Master Dashboard</span>
           </div>
-          <div className="h-6 w-[1px] bg-white/20 mx-2" />
-          <div className="hidden md:flex gap-4 text-[11px] font-medium text-slate-300 uppercase">
-            <span className="text-white border-b-2 border-blue-400 pb-1">Inteligencia de Inventarios</span>
-            <span className="hover:text-white cursor-pointer transition-colors">Planificación OC</span>
-            <span className="hover:text-white cursor-pointer transition-colors">Alertas de Tránsito</span>
-          </div>
         </div>
 
         <div className="flex items-center gap-4">
           <div className="flex flex-col items-end mr-4">
             <span className="text-[9px] font-bold text-blue-300 uppercase">Última Sincronización</span>
-            <span className="text-[10px] font-mono">MAY 2026 - ONLINE</span>
+            <span className="text-[10px] font-mono">EN LÍNEA</span>
           </div>
           <button 
             onClick={fetchData}
@@ -200,40 +205,6 @@ export default function DashboardLogisticoMaster() {
         </div>
       </nav>
 
-      {/* SUB-HEADER CON FILTROS */}
-      <div className="bg-white border-b border-slate-200 px-8 py-4 flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-4 flex-1 min-w-[300px]">
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-            <input 
-              type="text"
-              placeholder="Buscar por SKU o descripción..."
-              className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-md text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-          </div>
-          <select 
-            className="bg-slate-50 border border-slate-200 rounded-md px-4 py-2 text-xs font-bold text-slate-600 focus:outline-none"
-            value={filterFamilia}
-            onChange={(e) => setFilterFamilia(e.target.value)}
-          >
-            <option value="TODAS">TODAS LAS FAMILIAS</option>
-            {analytics?.familiasUnicas.map(f => (
-              <option key={f} value={f}>{f}</option>
-            ))}
-          </select>
-        </div>
-        
-        <div className="flex items-center gap-2">
-          <FioriBadge label="Sistema Activo" color="bg-emerald-50 text-emerald-700 border-emerald-200" />
-          <div className="h-8 w-[1px] bg-slate-200 mx-2" />
-          <button className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-md text-xs font-bold hover:bg-blue-700 shadow-sm transition-colors">
-            <ArrowUpRight size={14} /> EXPORTAR DATA
-          </button>
-        </div>
-      </div>
-
       {/* ÁREA DE CONTENIDO */}
       <div className="p-8 space-y-8 animate-in fade-in duration-700">
         
@@ -241,8 +212,8 @@ export default function DashboardLogisticoMaster() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <KPIStatusCard 
             title="Inventario Físico Total"
-            value={analytics?.stockTotal.toLocaleString()}
-            subtitle="Unidades en Almacén"
+            value={analytics?.stockTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+            subtitle="Unidades Activas"
             icon={HardDrive}
             colorClass="border-blue-500"
             loading={loading}
@@ -257,15 +228,15 @@ export default function DashboardLogisticoMaster() {
           />
           <KPIStatusCard 
             title="Pipeline Logístico"
-            value={arribos.length}
-            subtitle="Tránsitos Activos"
+            value={arribosActivos.length}
+            subtitle="Tránsitos con carga"
             icon={Ship}
             colorClass="border-amber-500"
             loading={loading}
           />
           <KPIStatusCard 
             title="Cobertura de Catálogo"
-            value={`${analytics?.familiaStats.length}`}
+            value={`${analytics?.familiaStats.length || 0}`}
             subtitle="Categorías Activas"
             icon={Globe}
             colorClass="border-emerald-500"
@@ -276,19 +247,19 @@ export default function DashboardLogisticoMaster() {
         {/* MAIN ANALYSIS GRID */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           
-          {/* LADO IZQUIERDO: QUIEBRES */}
+          {/* LADO IZQUIERDO: QUIEBRES Y FAMILIAS */}
           <div className="space-y-8">
             <section className="bg-white border border-slate-200 rounded-sm overflow-hidden flex flex-col h-[550px] shadow-sm">
               <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
                 <div>
                   <h3 className="text-xs font-black uppercase text-slate-500 tracking-tighter">Proyección de Quiebres</h3>
-                  <p className="text-[9px] text-slate-400 font-bold uppercase">Análisis Excluyente por Mes</p>
+                  <p className="text-[9px] text-slate-400 font-bold uppercase">Análisis Excluyente a 6 Meses</p>
                 </div>
                 <TrendingDown size={18} className="text-red-500" />
               </div>
               
               <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
-                {[1, 2, 3, 4, 5].map(m => {
+                {[1, 2, 3, 4, 5, 6].map(m => {
                   const key = `m${m}`;
                   const items = analytics?.quiebresMensuales[key] || [];
                   const isOpen = expandedMonth === m;
@@ -316,10 +287,10 @@ export default function DashboardLogisticoMaster() {
                             <div key={i} className="p-3 flex justify-between items-center hover:bg-slate-50 group">
                               <div className="min-w-0">
                                 <p className="font-black text-slate-800 text-[10px]">{item.codigo}</p>
-                                <p className="text-[9px] text-slate-400 uppercase truncate w-40">{item.descripcion}</p>
+                                <p className="text-[9px] text-slate-400 uppercase  w-40">{item.descripcion}</p>
                               </div>
                               <div className="text-right">
-                                <p className="font-bold text-red-600 text-[10px]">{Math.round(item.stock)} UN</p>
+                                <p className="font-bold text-red-600 text-[10px]">{parseFloat(item.stock).toLocaleString(undefined, { maximumFractionDigits: 2 })} UN</p>
                                 <p className="text-[8px] text-slate-400 uppercase">Stock Actual</p>
                               </div>
                             </div>
@@ -369,13 +340,13 @@ export default function DashboardLogisticoMaster() {
             </section>
           </div>
 
-          {/* LADO DERECHO: TABLA ABC COMPLETA (OCUPA 2 COLUMNAS EN LG) */}
+          {/* LADO DERECHO: TABLA ABC COMPLETA */}
           <div className="lg:col-span-2 space-y-8">
             <section className="bg-white border border-slate-200 rounded-sm shadow-sm flex flex-col h-[1000px]">
               <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
                 <div>
                   <h3 className="text-xs font-black uppercase text-slate-500 tracking-tighter">Clasificación ABC de Catálogo</h3>
-                  <p className="text-[9px] text-slate-400 font-bold uppercase">Ranking basado en promedio de salida mensual</p>
+                  <p className="text-[9px] text-slate-400 font-bold uppercase">Ranking basado en Total de Salidas Históricas</p>
                 </div>
                 <div className="flex gap-2">
                   <div className="flex flex-col items-center px-3 border-r border-slate-200">
@@ -400,7 +371,7 @@ export default function DashboardLogisticoMaster() {
                       <th className="p-4 bg-white">Estado / SKU</th>
                       <th className="p-4 bg-white">Descripción</th>
                       <th className="p-4 bg-white text-center">Familia</th>
-                      <th className="p-4 bg-white text-center">Venta Prom.</th>
+                      <th className="p-4 bg-white text-center text-blue-600">Total Salidas</th>
                       <th className="p-4 bg-white text-center">Stock</th>
                       <th className="p-4 bg-white text-center">Peso (%)</th>
                       <th className="p-4 bg-white text-center">Clase</th>
@@ -408,7 +379,7 @@ export default function DashboardLogisticoMaster() {
                   </thead>
                   <tbody className="divide-y divide-slate-50">
                     {analytics?.sortedABC.map((p, i) => {
-                      const isComprarYa = p.estado === "COMPRAR YA";
+                      const isComprarYa = String(p.estado).trim().toUpperCase() === "COMPRAR YA";
                       return (
                         <tr key={i} className={`hover:bg-blue-50/30 transition-colors group ${isComprarYa ? 'bg-red-50/20' : ''}`}>
                           <td className="p-4">
@@ -433,11 +404,11 @@ export default function DashboardLogisticoMaster() {
                             <span className="text-[10px] text-slate-500 font-medium uppercase bg-slate-100 px-2 py-1 rounded-sm">{p.familia || 'S/F'}</span>
                           </td>
                           <td className="p-4 text-center font-black text-slate-700 text-[11px]">
-                            {Math.round(p.promedio_mensual).toLocaleString()}
+                            {p.total_salidas_historicas.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                           </td>
                           <td className="p-4 text-center">
-                             <div className={`text-[11px] font-bold ${Number(p.stock) <= 0 ? 'text-red-500' : 'text-slate-700'}`}>
-                               {Number(p.stock).toLocaleString()}
+                             <div className={`text-[11px] font-bold ${parseFloat(p.stock) <= 0 ? 'text-red-500' : 'text-slate-700'}`}>
+                               {parseFloat(p.stock).toLocaleString(undefined, { maximumFractionDigits: 2 })}
                              </div>
                           </td>
                           <td className="p-4 text-center text-[10px] text-slate-400 font-mono">
@@ -457,14 +428,6 @@ export default function DashboardLogisticoMaster() {
                   </tbody>
                 </table>
               </div>
-              <div className="p-4 border-t border-slate-100 bg-slate-50 text-[10px] font-bold text-slate-400 flex justify-between items-center">
-                <span>MOSTRANDO {analytics?.sortedABC.length} REGISTROS</span>
-                <div className="flex gap-4">
-                  <span className="flex items-center gap-1"><div className="w-2 h-2 bg-emerald-500 rounded-full" /> ALTO MOVIMIENTO</span>
-                  <span className="flex items-center gap-1"><div className="w-2 h-2 bg-blue-500 rounded-full" /> MOVIMIENTO MEDIO</span>
-                  <span className="flex items-center gap-1"><div className="w-2 h-2 bg-slate-300 rounded-full" /> BAJO MOVIMIENTO</span>
-                </div>
-              </div>
             </section>
 
             {/* SECCIÓN DE ARRIBOS E IMPACTO */}
@@ -476,21 +439,22 @@ export default function DashboardLogisticoMaster() {
                   </div>
                   <div>
                     <h3 className="text-sm font-black uppercase tracking-widest text-blue-100">Seguimiento de Importaciones</h3>
-                    <p className="text-[10px] text-slate-400 uppercase font-bold">Carga en Tránsito Internacional</p>
+                    <p className="text-[10px] text-slate-400 uppercase font-bold">Carga Activa en Tránsito Internacional</p>
                   </div>
                 </div>
                 <div className="flex gap-4">
                    <div className="text-right">
-                     <p className="text-2xl font-light text-blue-400 leading-none">{arribos.length}</p>
-                     <p className="text-[8px] font-black text-slate-500 uppercase">Contenedores</p>
+                     <p className="text-2xl font-light text-blue-400 leading-none">{arribosActivos.length}</p>
+                     <p className="text-[8px] font-black text-slate-500 uppercase">SKUs en Tránsito</p>
                    </div>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {arribos.map((arr, i) => {
+                {arribosActivos.map((arr, i) => {
                   const master = data.find(p => p.codigo === arr.codigo);
-                  const stockFinal = (Number(master?.stock) || 0) + (Number(arr.cantidad) || 0);
+                  const cantidadArribo = parseFloat(arr.arribo) || 0;
+                  const stockFinal = (parseFloat(master?.stock) || 0) + cantidadArribo;
                   
                   return (
                     <div key={i} className="bg-slate-800/50 border border-slate-700 rounded-md p-5 hover:border-blue-500/50 transition-all group">
@@ -512,13 +476,13 @@ export default function DashboardLogisticoMaster() {
                       <div className="grid grid-cols-2 gap-4 mt-6 border-t border-slate-700 pt-4">
                         <div>
                           <p className="text-[8px] font-black text-slate-500 uppercase mb-1">Cantidad Arribo</p>
-                          <p className="text-lg font-bold text-white">{Number(arr.cantidad).toLocaleString()}</p>
+                          <p className="text-lg font-bold text-white">{cantidadArribo.toLocaleString()}</p>
                         </div>
                         <div className="text-right">
                           <p className="text-[8px] font-black text-slate-500 uppercase mb-1">Fecha ETA (Arribo)</p>
                           <div className="flex items-center justify-end gap-2 text-emerald-400 font-bold">
                             <Calendar size={12} />
-                            <span className="text-sm">{arr.fecha_arribo}</span>
+                            <span className="text-sm">{arr.fecha_arribo || "Por Confirmar"}</span>
                           </div>
                         </div>
                       </div>
@@ -527,7 +491,7 @@ export default function DashboardLogisticoMaster() {
                         <span className="text-[9px] font-black text-blue-300 uppercase">Impacto en Disponibilidad</span>
                         <div className="flex items-center gap-2">
                            <ArrowUpRight size={14} className="text-emerald-400" />
-                           <span className="text-sm font-black text-white">{stockFinal.toLocaleString()} <span className="text-[9px] text-slate-400">UN</span></span>
+                           <span className="text-sm font-black text-white">{stockFinal.toLocaleString(undefined, { maximumFractionDigits: 2 })} <span className="text-[9px] text-slate-400">UN</span></span>
                         </div>
                       </div>
                     </div>

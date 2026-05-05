@@ -189,7 +189,7 @@ export default function ModuloAbastecimientoSAP() {
           <div className="bg-blue-600 p-2 rounded shadow-lg"><Package size={24} /></div>
           <div>
             <h1 className="text-xl font-black tracking-tighter">SAP SUPPLY CHAIN PLANNING</h1>
-            <p className="text-[10px] text-blue-400 font-bold uppercase tracking-widest">Panel de Control de Importaciones v2026</p>
+            <p className="text-[10px] text-blue-400 font-bold uppercase tracking-widest">Panel de Control de Importaciones</p>
           </div>
         </div>
         
@@ -288,12 +288,12 @@ export default function ModuloAbastecimientoSAP() {
                   <div className="flex items-center gap-3 mb-2 text-xs font-black uppercase text-orange-700"><Clock size={20}/> Colocar OC Máximo</div>
                   <p className="text-2xl font-black text-orange-800">{itemSeleccionado.fechaLanzarOC}</p>
                   <p className="text-[9px] font-bold text-orange-600 mt-2 uppercase leading-tight">
-                    Cálculo: Lead Time ({itemSeleccionado.leadTimeDias}d) + Seguridad (45d)
+                    Cálculo: Lead Time ({itemSeleccionado.leadTimeDias}dias) + Seguridad (45dias)
                   </p>
                 </div>
 
                 <div className="p-5 bg-red-50 border border-red-200 rounded-xl text-red-900 shadow-sm">
-                  <div className="flex items-center gap-3 mb-2 text-xs font-black uppercase"><AlertTriangle size={20}/> Punto de Quiebre</div>
+                  <div className="flex items-center gap-3 mb-2 text-xs font-black uppercase"><AlertTriangle size={20}/> Fecha de Quiebre</div>
                   <p className="text-2xl font-black">{itemSeleccionado.fechaQuiebre}</p>
                 </div>
 
@@ -314,7 +314,7 @@ export default function ModuloAbastecimientoSAP() {
         {/* BARRA DE FILTROS */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-wrap gap-6 items-end">
           <div className="flex-1 min-w-[350px]">
-            <label className="text-[11px] font-black text-slate-400 uppercase mb-2 block">Buscador de SKUs</label>
+            <label className="text-[11px] font-black text-slate-400 uppercase mb-2 block">Buscador de Códigos</label>
             <div className="relative">
               <Search className="absolute left-4 top-3.5 text-slate-400" size={18} />
               <input 
@@ -351,11 +351,11 @@ export default function ModuloAbastecimientoSAP() {
                 <tr className="bg-[#1e293b] text-white font-bold uppercase sticky top-0 z-20">
                   <th className="p-4 text-center w-14">Acción</th>
                   <th className="p-4 text-center w-14 border-x border-slate-700">Estado</th>
-                  <th className="p-4">SKU</th>
+                  <th className="p-4">Código</th>
                   <th className="p-4">Descripción</th>
                   {/* COLUMNA LEAD TIME AÑADIDA */}
                   <th className="p-4 text-center bg-[#2d3748]">Lead Time</th>
-                  <th className="p-4 text-center bg-[#2d3748]">Físico</th>
+                  <th className="p-4 text-center bg-[#2d3748]">Stock Actual</th>
                   <th className="p-4 text-center">Arribos</th>
                   <th className="p-4 text-center">Promedio</th>
                   <th className="p-4 text-center bg-blue-700 text-white font-black">COB (M)</th>
@@ -391,12 +391,12 @@ export default function ModuloAbastecimientoSAP() {
                       </button>
                     </td>
                     <td className="p-4 font-black text-slate-800">{item.codigo}</td>
-                    <td className="p-4 font-bold text-slate-500 uppercase max-w-[250px] truncate" title={item.descripcion}>
+                    <td className="p-4 font-bold text-slate-900 uppercase max-w-[250px]" title={item.descripcion}>
                       {item.descripcion}
                     </td>
                     {/* CELDA LEAD TIME AÑADIDA */}
-                    <td className="p-4 text-center font-bold text-slate-600">
-                      {item.leadTimeDias} d
+                    <td className="p-4 text-center font-bold text-slate-900">
+                      {item.leadTimeDias} 
                     </td>
                     <td className="p-4 text-center font-black">{item.stockFisico.toLocaleString()}</td>
                     <td className="p-4 text-center font-black text-blue-600 bg-blue-50/30">
@@ -424,7 +424,7 @@ export default function ModuloAbastecimientoSAP() {
                         className={`p-4 text-center font-bold ${
                           p.stock <= 0 
                             ? 'text-red-300 bg-red-50/30' 
-                            : (p.llegaStock ? 'text-blue-600 bg-blue-100 font-black' : 'text-slate-400')
+                            : (p.llegaStock ? 'text-blue-600 bg-blue-100 font-black' : 'text-slate-800')
                         }`}
                       >
                         {Math.round(p.stock).toLocaleString()}
