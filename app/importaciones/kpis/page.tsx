@@ -3,536 +3,399 @@ import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
   AlertCircle, Ship, Package, RefreshCw, 
-  PieChart, Calendar, ChevronDown, ChevronUp, 
-  ShoppingCart, TrendingDown, ArrowUpRight, 
-  Layers, HardDrive, Globe
+  BarChart3, Calendar, ChevronDown, ChevronUp, 
+  TrendingDown, Layers, Filter, Activity, 
+  Search, ArrowUpRight, TrendingUp,
+  CheckCircle2
 } from "lucide-react";
+import {
+  XAxis, YAxis, CartesianGrid, Tooltip, 
+  ResponsiveContainer, AreaChart, Area, ReferenceLine, Label
+} from 'recharts';
 
-// --- COMPONENTES ATÓMICOS DE UI ---
+// --- COMPONENTES DE UI ---
 
 const KPIStatusCard = ({ title, value, subtitle, icon: Icon, colorClass, loading }: any) => (
-  <div className={`bg-white border-b-4 ${colorClass} p-5 shadow-sm hover:shadow-md transition-all group relative overflow-hidden`}>
+  <div className={`bg-white border-l-4 ${colorClass} p-5 shadow-sm hover:shadow-md transition-all group relative overflow-hidden`}>
     <div className="flex justify-between items-start">
       <div>
         <p className="text-[10px] font-black text-slate-400 uppercase tracking-tighter mb-1">{title}</p>
         {loading ? (
           <div className="h-8 w-24 bg-slate-100 animate-pulse rounded" />
         ) : (
-          <p className={`text-3xl font-light tracking-tight ${colorClass.replace('border-', 'text-')}`}>
-            {value}
-          </p>
+          <p className="text-3xl font-light tracking-tight text-slate-800">{value}</p>
         )}
       </div>
       <div className={`p-2 rounded-lg ${colorClass.replace('border-', 'bg-')}/10`}>
         <Icon size={20} className={colorClass.replace('border-', 'text-')} />
       </div>
     </div>
-    <div className="mt-4 flex items-center gap-2">
-      <span className="text-[10px] font-bold py-0.5 px-2 bg-slate-100 rounded-full text-slate-600 uppercase">
+    <div className="mt-4">
+      <span className="text-[9px] font-bold py-0.5 px-2 bg-slate-100 rounded-full text-slate-500 uppercase tracking-wider">
         {subtitle}
       </span>
-    </div>
-    <div className="absolute bottom-0 right-0 opacity-5 group-hover:opacity-10 transition-opacity">
-      <Icon size={80} />
     </div>
   </div>
 );
 
-export default function DashboardLogisticoMaster() {
+const SectionHeader = ({ title, subtitle, icon: Icon }: any) => (
+  <div className="flex items-center gap-3 mb-4">
+    <div className="p-2 bg-white rounded-lg shadow-sm border border-slate-100">
+      <Icon size={18} className="text-slate-600" />
+    </div>
+    <div>
+      <h2 className="text-sm font-black text-slate-700 uppercase tracking-wider">{title}</h2>
+      <p className="text-[10px] text-slate-400 font-medium">{subtitle}</p>
+    </div>
+  </div>
+);
+
+export default function DashboardLogisticoPro() {
   const [data, setData] = useState<any[]>([]);
   const [arribos, setArribos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [filterFamilia, setFilterFamilia] = useState("TODAS");
+  const [selectedSKU, setSelectedSKU] = useState<string | null>(null);
   const [expandedMonth, setExpandedMonth] = useState<number | null>(1);
+  const [searchTerm, setSearchTerm] = useState("");
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+  useEffect(() => { fetchData(); }, []);
 
   async function fetchData() {
     setLoading(true);
     try {
-      const { data: vData } = await supabase
-        .from("v_importaciones_unidas")
-        .select("*")
-        .order('codigo', { ascending: true });
-
-      const { data: aData } = await supabase
-        .from("imp_arribos")
-        .select("*")
-        .order('fecha_arribo', { ascending: true });
-
+      const { data: vData } = await supabase.from("v_importaciones_unidas").select("*");
+      const { data: aData } = await supabase.from("imp_arribos").select("*");
       setData(vData || []);
       setArribos(aData || []);
     } catch (err) {
-      console.error("Error fetching data:", err);
+      console.error("Error:", err);
     } finally {
       setLoading(false);
     }
   }
 
-  // --- BUSINESS LOGIC ENGINE ---
   const analytics = useMemo(() => {
     if (!data.length) return null;
 
-    // 1. FILTRO MAESTRO: Solo códigos activos (Soporta boolean true, 1, o string "true"/"si")
-    const activeData = data.filter(p => 
-      p.activo === true || 
-      String(p.activo).toLowerCase() === "true" || 
-      p.activo === 1 || 
-      String(p.activo).toLowerCase() === "si"
-    );
-
-    // 2. LÓGICA "COMPRAR YA"
-    const productosComprarYa = activeData.filter(p => String(p.estado).trim().toUpperCase() === "COMPRAR YA");
-    const gestionUrgenteCount = productosComprarYa.length;
-
-    // 3. QUIEBRES FUTUROS EXCLUYENTES (PIRÁMIDE DE RIESGO - 6 MESES)
-    const getQuiebresExcluyentes = () => {
-      let yaAsignados = new Set();
-      const meses = [1, 2, 3, 4, 5, 6]; // Expandido a 6 meses
-      const resultado: any = {};
-
-      meses.forEach(m => {
-        const quiebranEnEsteMes = activeData.filter(p => {
-          if (yaAsignados.has(p.codigo)) return false;
-          const stock = parseFloat(p.stock) || 0;
-          const vta = parseFloat(p.promedio_mensual) || 0;
-          const quiebra = stock < (vta * m);
-          if (quiebra) yaAsignados.add(p.codigo);
-          return quiebra;
-        });
-        resultado[`m${m}`] = quiebranEnEsteMes;
-      });
-      return resultado;
-    };
-
-    const quiebresMensuales = getQuiebresExcluyentes();
-
-    // 4. CÁLCULO DE SALIDAS HISTÓRICAS (Sumatoria de columnas de meses: s25_ene, s26_mayo, etc.)
-    const dataConSalidas = activeData.map(p => {
-      let totalSalidasCalculado = 0;
-      let hasMonthCols = false;
+    const processed = data.map(p => {
+      const stock = Math.max(0, Math.floor(parseFloat(p.stock) || 0));
+      const leadTimeDias = parseFloat(p.lead_time) || 30;
+      const leadTimeMeses = leadTimeDias / 30;
       
-      // Busca dinámicamente cualquier columna que empiece con "s" y dos dígitos (ej. s25_ene)
+      let history: any[] = [];
+      let totalSalidas = 0;
+
+      // Escaneo dinámico de columnas de salida (s25_, s26_, etc)
       Object.keys(p).forEach(key => {
         if (/^s\d{2}_/i.test(key)) {
-          totalSalidasCalculado += parseFloat(p[key]) || 0;
-          hasMonthCols = true;
+          const valor = Math.abs(parseFloat(p[key]) || 0);
+          totalSalidas += valor;
+          const label = key.replace(/^s\d{2}_/i, '').toUpperCase();
+          history.push({ mes: label, unidades: valor });
         }
       });
 
-      return {
-        ...p,
-        total_salidas_historicas: hasMonthCols ? totalSalidasCalculado : (parseFloat(p.promedio_mensual) || 0)
+      const promedio = parseFloat(p.promedio_mensual) || (totalSalidas / (history.length || 1));
+      const cobertura = promedio > 0 ? stock / promedio : (stock > 0 ? 99 : 0);
+
+      // --- LÓGICA DE SALUD (Basada en Lead Time solicitado) ---
+      let estadoSalud = "OKEY";
+      if (cobertura < 1) estadoSalud = "CRÍTICO";
+      else if (cobertura <= leadTimeMeses) estadoSalud = "RIESGO";
+      else if (stock > (promedio * (leadTimeMeses + 3))) estadoSalud = "SOBRESTOCK";
+      else if (stock > (promedio * (leadTimeMeses + 1))) estadoSalud = "ÓPTIMO";
+
+      return { 
+        ...p, stock, promedio, cobertura, history, estadoSalud, leadTimeMeses,
+        maxSalida: Math.max(...history.map(h => h.unidades), 0)
       };
     });
 
-    // 5. CLASIFICACIÓN ABC BASADO EN TOTAL DE SALIDAS (PARETO 80/15/5)
-    const totalSalidasGlobal = dataConSalidas.reduce((acc, p) => acc + p.total_salidas_historicas, 0);
-    const sortedABC = [...dataConSalidas]
-      .sort((a, b) => b.total_salidas_historicas - a.total_salidas_historicas)
-      .reduce((acc: any[], p, i) => {
-        const vtaVal = p.total_salidas_historicas;
-        const acumuladoAnterior = acc.length > 0 ? acc[acc.length - 1].acum : 0;
-        const actualAcum = acumuladoAnterior + vtaVal;
-        const pctAcum = totalSalidasGlobal > 0 ? (actualAcum / totalSalidasGlobal) * 100 : 0;
-        
-        acc.push({
-          ...p,
-          clase: pctAcum <= 80 ? "A" : pctAcum <= 95 ? "B" : "C",
-          acum: actualAcum,
-          peso: totalSalidasGlobal > 0 ? (vtaVal / totalSalidasGlobal) * 100 : 0
-        });
-        return acc;
-      }, []);
-
-    // 6. DENSIDAD POR FAMILIA (Sobre data activa)
-    const famMap = new Map();
-    activeData.forEach(p => {
-      const f = p.familia || "SIN FAMILIA";
-      if (!famMap.has(f)) famMap.set(f, { total: 0, activos: 0 });
-      const stats = famMap.get(f);
-      stats.total += 1;
-      if ((parseFloat(p.stock) || 0) > 0) stats.activos += 1;
+    // Quiebres y Riesgo Total (Mes 1 al 5)
+    const quiebres = { m1: [], m2: [], m3: [], m4: [], m5: [] };
+    processed.forEach(p => {
+      for(let i=1; i<=5; i++) {
+        if (p.cobertura >= i-1 && p.cobertura < i) (quiebres as any)[`m${i}`].push(p);
+      }
     });
 
-    const familiaStats = Array.from(famMap.entries()).map(([name, stats]) => ({
-      name,
-      ...stats,
-      pctActivos: (stats.activos / stats.total) * 100
-    })).sort((a, b) => b.total - a.total);
+    const totalRiesgoM1M5 = Object.values(quiebres).reduce((acc, curr) => acc + curr.length, 0);
+
+    // ABC Filtrable
+    const dataABC = filterFamilia === "TODAS" ? processed : processed.filter(p => p.familia === filterFamilia);
+    const totalVentas = dataABC.reduce((acc, p) => acc + (p.promedio * 12), 0);
+    let acumulado = 0;
+    const sortedABC = [...dataABC].sort((a, b) => b.promedio - a.promedio).map(p => {
+      acumulado += (p.promedio * 12);
+      const pct = (acumulado / totalVentas) * 100;
+      return { ...p, pct, clase: pct <= 80 ? 'A' : pct <= 95 ? 'B' : 'C' };
+    });
 
     return {
-      activeData,
-      gestionUrgenteCount,
-      quiebresMensuales,
+      processed,
       sortedABC,
-      familiaStats,
-      stockTotal: activeData.reduce((acc, p) => acc + (parseFloat(p.stock) || 0), 0)
+      quiebres,
+      totalRiesgoM1M5,
+      familias: Array.from(new Set(processed.map(p => p.familia).filter(Boolean))),
+      stats: {
+        critico: processed.filter(p => p.estadoSalud === "CRÍTICO").length,
+        riesgo: processed.filter(p => p.estadoSalud === "RIESGO").length,
+        optimo: processed.filter(p => p.estadoSalud === "ÓPTIMO").length,
+        sobrestock: processed.filter(p => p.estadoSalud === "SOBRESTOCK").length,
+        totalStock: processed.reduce((acc, p) => acc + p.stock, 0)
+      }
     };
-  }, [data]);
+  }, [data, filterFamilia]);
 
-  // 7. PIPELINE LOGÍSTICO: Filtra arribos que realmente tengan datos
-  const arribosActivos = useMemo(() => {
-    return arribos.filter(a => parseFloat(a.arribo) > 0);
-  }, [arribos]);
+  const selectedData = useMemo(() => 
+    analytics?.processed.find(p => p.codigo === selectedSKU), [selectedSKU, analytics]
+  );
+
+  if (loading) return (
+    <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-900">
+      <RefreshCw size={40} className="animate-spin text-blue-500 mb-4" />
+      <span className="text-white font-black text-xs tracking-[0.3em]">SINCRONIZANDO CD...</span>
+    </div>
+  );
 
   return (
-    <div className="min-h-screen bg-[#f3f4f6] text-[#32363a] font-sans">
-      
-      {/* BARRA DE ESTADO SUPERIOR (SHELL BAR LIMPIA) */}
-      <nav className="h-12 bg-[#354a5f] text-white flex items-center justify-between px-6 shadow-md sticky top-0 z-50">
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2">
-            <div className="bg-blue-500 p-1 rounded-sm">
-              <Layers size={18} />
-            </div>
-            <span className="font-bold tracking-tight text-sm uppercase">Logistics Master Dashboard</span>
+    <div className="min-h-screen bg-[#f8fafc] text-slate-900 pb-10">
+      {/* HEADER */}
+      <header className="h-14 bg-white border-b border-slate-200 px-6 flex items-center justify-between sticky top-0 z-50">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center text-white">
+            <Package size={18} />
           </div>
+          <h1 className="font-black text-xs uppercase tracking-tighter">SAP Supply Chain <span className="text-blue-600">Planning</span></h1>
         </div>
+        <button onClick={fetchData} className="text-[10px] font-black bg-slate-100 px-3 py-1.5 rounded hover:bg-slate-200 transition-all flex items-center gap-2">
+          <RefreshCw size={12} /> REFRESCAR DASHBOARD
+        </button>
+      </header>
 
-        <div className="flex items-center gap-4">
-          <div className="flex flex-col items-end mr-4">
-            <span className="text-[9px] font-bold text-blue-300 uppercase">Última Sincronización</span>
-            <span className="text-[10px] font-mono">EN LÍNEA</span>
-          </div>
-          <button 
-            onClick={fetchData}
-            className="p-2 hover:bg-white/10 rounded-full transition-all active:scale-95"
-          >
-            <RefreshCw size={18} className={loading ? "animate-spin" : ""} />
-          </button>
-        </div>
-      </nav>
-
-      {/* ÁREA DE CONTENIDO */}
-      <div className="p-8 space-y-8 animate-in fade-in duration-700">
+      <div className="max-w-[1600px] mx-auto p-6 space-y-6">
         
-        {/* KPI TILES GRID */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <KPIStatusCard 
-            title="Inventario Físico Total"
-            value={analytics?.stockTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-            subtitle="Unidades Activas"
-            icon={HardDrive}
-            colorClass="border-blue-500"
-            loading={loading}
-          />
-          <KPIStatusCard 
-            title="Estado: Gestión Urgente"
-            value={analytics?.gestionUrgenteCount}
-            subtitle="SKUs por comprar ya"
-            icon={AlertCircle}
-            colorClass="border-red-500"
-            loading={loading}
-          />
-          <KPIStatusCard 
-            title="Pipeline Logístico"
-            value={arribosActivos.length}
-            subtitle="Tránsitos con carga"
-            icon={Ship}
-            colorClass="border-amber-500"
-            loading={loading}
-          />
-          <KPIStatusCard 
-            title="Cobertura de Catálogo"
-            value={`${analytics?.familiaStats.length || 0}`}
-            subtitle="Categorías Activas"
-            icon={Globe}
-            colorClass="border-emerald-500"
-            loading={loading}
-          />
+        {/* KPI ROW */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <KPIStatusCard title="Stock Total CD" value={analytics?.stats.totalStock.toLocaleString()} subtitle="Unidades Físicas" icon={Package} colorClass="border-slate-800" />
+          <KPIStatusCard title="Riesgo Total (1-5M)" value={analytics?.totalRiesgoM1M5} subtitle="SKUs bajo lead time" icon={AlertCircle} colorClass="border-red-500" />
+          <KPIStatusCard title="Eficiencia Óptima" value={analytics?.stats.optimo} subtitle="Stock balanceado" icon={CheckCircle2} colorClass="border-emerald-500" />
+          <KPIStatusCard title="Exceso Detectado" value={analytics?.stats.sobrestock} subtitle="Capital inmovilizado" icon={TrendingUp} colorClass="border-amber-500" />
         </div>
 
-        {/* MAIN ANALYSIS GRID */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          
-          {/* LADO IZQUIERDO: QUIEBRES Y FAMILIAS */}
-          <div className="space-y-8">
-            <section className="bg-white border border-slate-200 rounded-sm overflow-hidden flex flex-col h-[550px] shadow-sm">
-              <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
-                <div>
-                  <h3 className="text-xs font-black uppercase text-slate-500 tracking-tighter">Proyección de Quiebres</h3>
-                  <p className="text-[9px] text-slate-400 font-bold uppercase">Análisis Excluyente a 6 Meses</p>
+        {/* MIDDLE SECTION: SALUD Y ARRIBOS */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="lg:col-span-4 space-y-6">
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+              <SectionHeader title="Salud del Inventario" subtitle="Criterio: Stock vs Lead Time" icon={Activity} />
+              <div className="grid grid-cols-2 gap-3 mt-4">
+                <div className="p-4 bg-red-50 rounded-lg border border-red-100">
+                  <p className="text-[10px] font-black text-red-600 uppercase">Crítico (&lt;1M)</p>
+                  <p className="text-2xl font-light">{analytics?.stats.critico}</p>
                 </div>
-                <TrendingDown size={18} className="text-red-500" />
+                <div className="p-4 bg-orange-50 rounded-lg border border-orange-100">
+                  <p className="text-[10px] font-black text-orange-600 uppercase">En Riesgo (&lt;LT)</p>
+                  <p className="text-2xl font-light">{analytics?.stats.riesgo}</p>
+                </div>
+                <div className="p-4 bg-emerald-50 rounded-lg border border-emerald-100">
+                  <p className="text-[10px] font-black text-emerald-600 uppercase">Óptimo</p>
+                  <p className="text-2xl font-light">{analytics?.stats.optimo}</p>
+                </div>
+                <div className="p-4 bg-blue-50 rounded-lg border border-blue-100">
+                  <p className="text-[10px] font-black text-blue-600 uppercase">Sobrestock</p>
+                  <p className="text-2xl font-light">{analytics?.stats.sobrestock}</p>
+                </div>
               </div>
-              
-              <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
-                {[1, 2, 3, 4, 5, 6].map(m => {
-                  const key = `m${m}`;
-                  const items = analytics?.quiebresMensuales[key] || [];
-                  const isOpen = expandedMonth === m;
-                  return (
-                    <div key={m} className={`border rounded-sm transition-all ${isOpen ? 'border-red-200 ring-1 ring-red-100' : 'border-slate-100'}`}>
-                      <button 
-                        onClick={() => setExpandedMonth(isOpen ? null : m)}
-                        className={`w-full p-4 flex justify-between items-center text-[11px] font-bold uppercase transition-colors ${isOpen ? 'bg-red-50 text-red-700' : 'hover:bg-slate-50 text-slate-600'}`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] ${isOpen ? 'bg-red-600 text-white' : 'bg-slate-200 text-slate-500'}`}>
-                            {m}
-                          </span>
-                          <span>Mes {m}: Impacto de Quiebre</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="bg-white/50 px-2 py-0.5 rounded border border-red-200">{items.length} SKUs</span>
-                          {isOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                        </div>
-                      </button>
-                      
-                      {isOpen && (
-                        <div className="bg-white divide-y divide-slate-50 max-h-80 overflow-y-auto">
-                          {items.length > 0 ? items.map((item: any, i: number) => (
-                            <div key={i} className="p-3 flex justify-between items-center hover:bg-slate-50 group">
-                              <div className="min-w-0">
-                                <p className="font-black text-slate-800 text-[10px]">{item.codigo}</p>
-                                <p className="text-[9px] text-slate-400 uppercase  w-40">{item.descripcion}</p>
-                              </div>
-                              <div className="text-right">
-                                <p className="font-bold text-red-600 text-[10px]">{parseFloat(item.stock).toLocaleString(undefined, { maximumFractionDigits: 2 })} UN</p>
-                                <p className="text-[8px] text-slate-400 uppercase">Stock Actual</p>
-                              </div>
-                            </div>
-                          )) : (
-                            <div className="p-8 text-center text-slate-400 text-[10px] font-bold uppercase">No hay quiebres nuevos en este periodo</div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
+            </div>
 
-            {/* DENSIDAD POR FAMILIA */}
-            <section className="bg-white border border-slate-200 rounded-sm p-6 shadow-sm">
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="text-xs font-black uppercase text-slate-500 tracking-tighter flex items-center gap-2">
-                  <PieChart size={16} className="text-blue-500" /> Densidad de Catálogo
-                </h3>
-                <span className="text-[10px] font-bold text-slate-400">ACTIVIDAD POR RAMO</span>
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+              <div className="p-4 bg-slate-50 border-b flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Calendar size={14} className="text-slate-400" />
+                  <span className="text-[10px] font-black uppercase text-slate-500">Cronograma de Quiebre</span>
+                </div>
               </div>
-              <div className="space-y-5 max-h-[350px] overflow-y-auto pr-2 custom-scrollbar">
-                {analytics?.familiaStats.map((fam, i) => (
-                  <div key={i} className="group">
-                    <div className="flex justify-between text-[10px] mb-1.5 items-end">
-                      <div>
-                        <p className="font-black text-slate-700 uppercase group-hover:text-blue-600 transition-colors">{fam.name}</p>
-                        <p className="text-[9px] text-slate-400 font-medium">
-                          {fam.total} TOTAL | <span className="text-emerald-600 font-bold">{fam.activos} ACTIVOS</span>
-                        </p>
+              <div className="divide-y divide-slate-100">
+                {[1, 2, 3, 4, 5].map(m => (
+                  <div key={m}>
+                    <button onClick={() => setExpandedMonth(expandedMonth === m ? null : m)} className="w-full p-4 flex justify-between items-center hover:bg-slate-50">
+                      <span className="text-[11px] font-bold text-slate-600 tracking-tight">Mes de Quiebre: {m}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 bg-red-100 text-red-700 text-[10px] font-black rounded-full">{(analytics?.quiebres as any)[`m${m}`].length}</span>
+                        {expandedMonth === m ? <ChevronUp size={14}/> : <ChevronDown size={14}/>}
                       </div>
-                      <div className="text-right">
-                        <span className="font-black text-slate-800">{fam.pctActivos.toFixed(0)}%</span>
-                        <p className="text-[8px] text-slate-400 uppercase">Disponibilidad</p>
+                    </button>
+                    {expandedMonth === m && (
+                      <div className="bg-slate-50/50 max-h-48 overflow-y-auto p-2 space-y-1 custom-scrollbar">
+                        {(analytics?.quiebres as any)[`m${m}`].map((p: any) => (
+                          <div key={p.codigo} className="bg-white p-2 border border-slate-100 rounded text-[10px] flex justify-between items-center">
+                            <span className="font-bold">{p.codigo}</span>
+                            <span className="text-red-500 font-black">{p.cobertura.toFixed(1)}m</span>
+                          </div>
+                        ))}
                       </div>
-                    </div>
-                    <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden flex">
-                      <div 
-                        className={`h-full transition-all duration-1000 ${fam.pctActivos > 70 ? 'bg-emerald-500' : fam.pctActivos > 30 ? 'bg-blue-500' : 'bg-amber-500'}`} 
-                        style={{ width: `${fam.pctActivos}%` }} 
-                      />
-                    </div>
+                    )}
                   </div>
                 ))}
               </div>
-            </section>
+            </div>
           </div>
 
-          {/* LADO DERECHO: TABLA ABC COMPLETA */}
-          <div className="lg:col-span-2 space-y-8">
-            <section className="bg-white border border-slate-200 rounded-sm shadow-sm flex flex-col h-[1000px]">
-              <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
-                <div>
-                  <h3 className="text-xs font-black uppercase text-slate-500 tracking-tighter">Clasificación ABC de Catálogo</h3>
-                  <p className="text-[9px] text-slate-400 font-bold uppercase">Ranking basado en Total de Salidas Históricas</p>
-                </div>
-                <div className="flex gap-2">
-                  <div className="flex flex-col items-center px-3 border-r border-slate-200">
-                    <span className="text-[10px] font-black text-emerald-600">80%</span>
-                    <span className="text-[8px] text-slate-400 font-bold">CLASE A</span>
-                  </div>
-                  <div className="flex flex-col items-center px-3 border-r border-slate-200">
-                    <span className="text-[10px] font-black text-blue-600">15%</span>
-                    <span className="text-[8px] text-slate-400 font-bold">CLASE B</span>
-                  </div>
-                  <div className="flex flex-col items-center px-3">
-                    <span className="text-[10px] font-black text-slate-400">5%</span>
-                    <span className="text-[8px] text-slate-400 font-bold">CLASE C</span>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="flex-1 overflow-auto custom-scrollbar">
-                <table className="w-full text-left border-collapse">
-                  <thead className="sticky top-0 bg-white shadow-sm z-20">
-                    <tr className="text-slate-400 uppercase text-[10px] font-black border-b border-slate-100">
-                      <th className="p-4 bg-white">Estado / SKU</th>
-                      <th className="p-4 bg-white">Descripción</th>
-                      <th className="p-4 bg-white text-center">Familia</th>
-                      <th className="p-4 bg-white text-center text-blue-600">Total Salidas</th>
-                      <th className="p-4 bg-white text-center">Stock</th>
-                      <th className="p-4 bg-white text-center">Peso (%)</th>
-                      <th className="p-4 bg-white text-center">Clase</th>
+          <div className="lg:col-span-8 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/30">
+              <SectionHeader title="Monitor de Arribos" subtitle="Tránsitos y ETAs confirmadas" icon={Ship} />
+            </div>
+            <div className="flex-1 overflow-auto custom-scrollbar">
+              <table className="w-full text-left">
+                <thead className="sticky top-0 bg-white border-b text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                  <tr>
+                    <th className="p-4">SKU / Identificador</th>
+                    <th className="p-4">Contenedor</th>
+                    <th className="p-4 text-center">Cantidad</th>
+                    <th className="p-4 text-center">ETA CD</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {arribos.map((a, i) => (
+                    <tr key={i} className="hover:bg-blue-50/30 transition-colors">
+                      <td className="p-4 text-[11px] font-bold text-slate-700">{a.codigo}</td>
+                      <td className="p-4 text-[10px] font-medium text-blue-500">{a.contenedor || 'EN TRÁNSITO'}</td>
+                      <td className="p-4 text-center font-mono font-bold text-xs">{Math.floor(a.arribo).toLocaleString()}</td>
+                      <td className="p-4 text-center">
+                        <span className="bg-slate-100 px-2 py-1 rounded text-[10px] font-bold">{a.fecha_arribo || 'POR CONFIRMAR'}</span>
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-50">
-                    {analytics?.sortedABC.map((p, i) => {
-                      const isComprarYa = String(p.estado).trim().toUpperCase() === "COMPRAR YA";
-                      return (
-                        <tr key={i} className={`hover:bg-blue-50/30 transition-colors group ${isComprarYa ? 'bg-red-50/20' : ''}`}>
-                          <td className="p-4">
-                            <div className="flex items-center gap-3">
-                              {isComprarYa ? (
-                                <div className="bg-red-100 text-red-600 p-1.5 rounded-sm animate-pulse">
-                                  <ShoppingCart size={14} />
-                                </div>
-                              ) : (
-                                <div className="bg-slate-100 text-slate-400 p-1.5 rounded-sm">
-                                  <Package size={14} />
-                                </div>
-                              )}
-                              <span className="font-black text-slate-800 text-[11px]">{p.codigo}</span>
-                            </div>
-                          </td>
-                          <td className="p-4">
-                            <p className="text-[10px] font-bold text-slate-700 uppercase line-clamp-1">{p.descripcion}</p>
-                            {isComprarYa && <span className="text-[8px] font-black text-red-500 uppercase tracking-widest">CRÍTICO: COMPRAR YA</span>}
-                          </td>
-                          <td className="p-4 text-center">
-                            <span className="text-[10px] text-slate-500 font-medium uppercase bg-slate-100 px-2 py-1 rounded-sm">{p.familia || 'S/F'}</span>
-                          </td>
-                          <td className="p-4 text-center font-black text-slate-700 text-[11px]">
-                            {p.total_salidas_historicas.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                          </td>
-                          <td className="p-4 text-center">
-                             <div className={`text-[11px] font-bold ${parseFloat(p.stock) <= 0 ? 'text-red-500' : 'text-slate-700'}`}>
-                               {parseFloat(p.stock).toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                             </div>
-                          </td>
-                          <td className="p-4 text-center text-[10px] text-slate-400 font-mono">
-                            {p.peso.toFixed(2)}%
-                          </td>
-                          <td className="p-4 text-center">
-                            <span className={`px-3 py-1 rounded-sm font-black text-[10px] shadow-sm ${
-                              p.clase === 'A' ? 'bg-emerald-500 text-white' : 
-                              p.clase === 'B' ? 'bg-blue-500 text-white' : 'bg-slate-200 text-slate-600'
-                            }`}>
-                              {p.clase}
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </section>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
 
-            {/* SECCIÓN DE ARRIBOS E IMPACTO */}
-            <section className="bg-[#1e293b] text-white rounded-sm p-6 shadow-xl border border-slate-700">
-              <div className="flex items-center justify-between mb-8">
-                <div className="flex items-center gap-3">
-                  <div className="bg-blue-500/20 p-2 rounded-lg border border-blue-500/30">
-                    <Ship className="text-blue-400" size={24} />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-black uppercase tracking-widest text-blue-100">Seguimiento de Importaciones</h3>
-                    <p className="text-[10px] text-slate-400 uppercase font-bold">Carga Activa en Tránsito Internacional</p>
-                  </div>
+        {/* BOTTOM SECTION: ABC Y GRÁFICO */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="lg:col-span-8 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden h-[600px] flex flex-col">
+            <div className="p-5 border-b flex items-center justify-between bg-white">
+              <SectionHeader title="Clasificación ABC" subtitle="Análisis de Pareto por Familia" icon={TrendingDown} />
+              <div className="flex gap-2">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                  <input 
+                    type="text" placeholder="Buscar SKU..." 
+                    className="pl-9 pr-4 py-2 bg-slate-100 border-none rounded-lg text-xs font-bold"
+                    onChange={(e) => setSearchTerm(e.target.value.toUpperCase())}
+                  />
                 </div>
-                <div className="flex gap-4">
-                   <div className="text-right">
-                     <p className="text-2xl font-light text-blue-400 leading-none">{arribosActivos.length}</p>
-                     <p className="text-[8px] font-black text-slate-500 uppercase">SKUs en Tránsito</p>
-                   </div>
+                <select 
+                  className="px-4 py-2 bg-slate-900 text-white text-[10px] font-black rounded-lg uppercase"
+                  value={filterFamilia} onChange={(e) => setFilterFamilia(e.target.value)}
+                >
+                  <option value="TODAS">TODAS LAS FAMILIAS</option>
+                  {analytics?.familias.map(f => <option key={f} value={f}>{f}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="flex-1 overflow-auto custom-scrollbar">
+              <table className="w-full text-left">
+                <thead className="sticky top-0 bg-slate-50 text-[9px] font-black text-slate-400 uppercase border-b">
+                  <tr>
+                    <th className="p-4">Producto</th>
+                    <th className="p-4 text-center">Promedio Mensual</th>
+                    <th className="p-4 text-center">Stock CD</th>
+                    <th className="p-4 text-center">Cobertura</th>
+                    <th className="p-4 text-center">Salud</th>
+                    <th className="p-4 text-center">Clase</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {analytics?.sortedABC
+                    .filter(p => p.codigo.includes(searchTerm) || p.descripcion.includes(searchTerm))
+                    .map((p, i) => (
+                    <tr key={i} onClick={() => setSelectedSKU(p.codigo)} className={`hover:bg-blue-50 cursor-pointer ${selectedSKU === p.codigo ? 'bg-blue-50' : ''}`}>
+                      <td className="p-4">
+                        <p className="text-[11px] font-black text-slate-800">{p.codigo}</p>
+                        <p className="text-[9px] text-slate-400 uppercase truncate w-60">{p.descripcion}</p>
+                      </td>
+                      <td className="p-4 text-center font-mono text-xs text-blue-600 font-bold">{Math.floor(p.promedio).toLocaleString()}</td>
+                      <td className="p-4 text-center font-mono text-xs font-bold">{p.stock.toLocaleString()}</td>
+                      <td className="p-4 text-center">
+                        <span className={`text-[10px] font-black ${p.cobertura < 1 ? 'text-red-500' : 'text-slate-700'}`}>
+                          {p.cobertura.toFixed(1)} M
+                        </span>
+                      </td>
+                      <td className="p-4 text-center">
+                        <span className={`text-[8px] font-black px-2 py-1 rounded-full ${
+                          p.estadoSalud === 'CRÍTICO' ? 'bg-red-100 text-red-600' : 
+                          p.estadoSalud === 'RIESGO' ? 'bg-orange-100 text-orange-600' : 'bg-emerald-100 text-emerald-600'
+                        }`}>
+                          {p.estadoSalud}
+                        </span>
+                      </td>
+                      <td className="p-4 text-center">
+                        <span className={`w-6 h-6 flex items-center justify-center rounded text-[10px] font-black mx-auto ${
+                          p.clase === 'A' ? 'bg-emerald-500 text-white' : p.clase === 'B' ? 'bg-blue-500 text-white' : 'bg-slate-200'
+                        }`}>
+                          {p.clase}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="lg:col-span-4 bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-[600px] flex flex-col">
+            <SectionHeader title="Histórico de Salidas" subtitle={selectedSKU || "Seleccione un SKU"} icon={BarChart3} />
+            <div className="flex-1 mt-6">
+              {selectedSKU ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={selectedData?.history}>
+                    <defs>
+                      <linearGradient id="colorSal" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.4}/>
+                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis dataKey="mes" axisLine={false} tickLine={false} tick={{fontSize: 9, fontWeight: 700}} />
+                    <YAxis axisLine={false} tickLine={false} tick={{fontSize: 9, fontWeight: 700}} />
+                    <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}} />
+                    <Area type="monotone" dataKey="unidades" stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorSal)" />
+                    {/* Referencia de Pico Máximo */}
+                    <ReferenceLine y={selectedData?.maxSalida} stroke="#ef4444" strokeDasharray="3 3">
+                      <Label value="PICO MAX" position="top" fill="#ef4444" fontSize={8} fontWeight={900} />
+                    </ReferenceLine>
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full w-full flex items-center justify-center bg-slate-50 rounded-xl border-2 border-dashed border-slate-200">
+                  <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Seleccione un SKU en la tabla</p>
+                </div>
+              )}
+            </div>
+            {selectedSKU && (
+              <div className="mt-6 p-4 bg-slate-50 rounded-lg border border-slate-100">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-[10px] font-black text-slate-400 uppercase">Promedio Mensual</span>
+                  <span className="text-sm font-bold text-slate-700">{Math.floor(selectedData?.promedio).toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-[10px] font-black text-slate-400 uppercase">Lead Time (M)</span>
+                  <span className="text-sm font-bold text-blue-600">{selectedData?.leadTimeMeses.toFixed(1)}</span>
                 </div>
               </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {arribosActivos.map((arr, i) => {
-                  const master = data.find(p => p.codigo === arr.codigo);
-                  const cantidadArribo = parseFloat(arr.arribo) || 0;
-                  const stockFinal = (parseFloat(master?.stock) || 0) + cantidadArribo;
-                  
-                  return (
-                    <div key={i} className="bg-slate-800/50 border border-slate-700 rounded-md p-5 hover:border-blue-500/50 transition-all group">
-                      <div className="flex justify-between items-start mb-4">
-                        <div>
-                          <span className="text-[9px] font-black text-blue-400 uppercase tracking-widest bg-blue-400/10 px-2 py-0.5 rounded-sm border border-blue-400/20">
-                            TRÁNSITO ACTIVO
-                          </span>
-                          <h4 className="text-lg font-light mt-2 group-hover:text-blue-300 transition-colors">{arr.codigo}</h4>
-                          <p className="text-[10px] text-slate-400 font-bold uppercase truncate w-56">
-                            {master?.descripcion || "Descripción no disponible"}
-                          </p>
-                        </div>
-                        <div className="bg-slate-700 p-2 rounded text-blue-400">
-                          <Package size={18} />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4 mt-6 border-t border-slate-700 pt-4">
-                        <div>
-                          <p className="text-[8px] font-black text-slate-500 uppercase mb-1">Cantidad Arribo</p>
-                          <p className="text-lg font-bold text-white">{cantidadArribo.toLocaleString()}</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-[8px] font-black text-slate-500 uppercase mb-1">Fecha ETA (Arribo)</p>
-                          <div className="flex items-center justify-end gap-2 text-emerald-400 font-bold">
-                            <Calendar size={12} />
-                            <span className="text-sm">{arr.fecha_arribo || "Por Confirmar"}</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="mt-4 bg-blue-500/10 border border-blue-500/20 rounded p-3 flex justify-between items-center">
-                        <span className="text-[9px] font-black text-blue-300 uppercase">Impacto en Disponibilidad</span>
-                        <div className="flex items-center gap-2">
-                           <ArrowUpRight size={14} className="text-emerald-400" />
-                           <span className="text-sm font-black text-white">{stockFinal.toLocaleString(undefined, { maximumFractionDigits: 2 })} <span className="text-[9px] text-slate-400">UN</span></span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
+            )}
           </div>
         </div>
       </div>
 
-      {/* ESTILOS GLOBALES */}
       <style jsx global>{`
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;900&display=swap');
-        
-        body {
-          font-family: 'Inter', sans-serif;
-          letter-spacing: -0.01em;
-        }
-
-        .custom-scrollbar::-webkit-scrollbar {
-          width: 5px;
-          height: 5px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-          background: #f1f5f9;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-          background: #cbd5e1;
-          border-radius: 10px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-          background: #94a3b8;
-        }
-
-        .line-clamp-1 {
-          display: -webkit-box;
-          -webkit-line-clamp: 1;
-          -webkit-box-orient: vertical;
-          overflow: hidden;
-        }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
       `}</style>
     </div>
   );
