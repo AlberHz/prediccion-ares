@@ -1,118 +1,114 @@
 "use client";
 import { useRouter } from "next/navigation";
+import { motion } from "framer-motion";
 import { 
-  Box, Cpu, Package, ChevronRight, 
-  Info, ShieldCheck, Activity, Target
+  BrainCircuit, Truck, BarChart3, Clock, 
+  CloudUpload, ArrowRight, Activity, DollarSign 
 } from "lucide-react";
 
-export default function Home() {
+export default function LaunchpadPage() {
   const router = useRouter();
 
-  const modulos = [
-    { 
-      nombre: "IMPORTACIONES", 
-      ruta: "/importaciones/predicciones", 
-      icono: <Box size={28} />, 
-      info: "Gestión de suministro internacional, Gestiòn de los Lead times, colocaciòn de fechas y cantidades de arribos y modificacion de los consumos promedios." 
+  const modules = [
+    {
+      title: "Predicciones de Abastecimiento",
+      description: "Simulador de quiebres de stock y cálculo automatizado del flujo de compras proyectado.",
+      path: "/importaciones/predicciones",
+      icon: <BrainCircuit size={20} />,
+      badge: "Motor Estadístico"
     },
-    { 
-      nombre: "MATERIA PRIMA", 
-      ruta: "/materia-prima/predicciones", 
-      icono: <Cpu size={28} />, 
-      info: "Gestiòn del suministro local, Planeaciòn de insumos criticos y modificaciones de los aspectos basicos del abastecimiento." 
+    {
+      title: "Gestión de Arribos",
+      description: "Monitoreo de importaciones y compras en tránsito. Simulación de ingresos a la línea de tiempo.",
+      path: "/importaciones/arribos",
+      icon: <Truck size={20} />,
+      badge: "Tránsito"
     },
-    { 
-      nombre: "SUMINISTROS", 
-      ruta: "/suministros/predicciones", 
-      icono: <Package size={28} />, 
-      info: "Administración de materiales indirectos, consumibles y stock de operación." 
+    {
+      title: "Monitor de Lead Times",
+      description: "Análisis histórico de tiempos de entrega de proveedores y desviaciones logísticas.",
+      path: "/importaciones/lead-time",
+      icon: <Clock size={20} />,
+    },
+    {
+      title: "Cronología",
+      description: "Análisis histórico de tiempos de entrega de proveedores y desviaciones logísticas.",
+      path: "/importaciones/cronologia",
+      icon: <Clock size={20} />,
+    },
+    {
+      title: "Panel de KPIs de Compras",
+      description: "Visualización de volúmenes, presupuestos requeridos por mes y códigos críticos a comprar.",
+      path: "/importaciones/kpis",
+      icon: <BarChart3 size={20} />,
+    },
+    {
+      title: "Carga de Datos Iniciales",
+      description: "Consola de importación para actualizar la foto del Stock Actual y la Tabla de Movimientos.",
+      path: "/importaciones/cargar-datos",
+      icon: <CloudUpload size={20} />,
     },
   ];
 
   return (
-    <div className="min-h-screen bg-[#f3f6f8] flex flex-col font-sans antialiased">
-      
-      {/* Shell Bar Superior - SAP Standard */}
-      <header className="h-[48px] bg-[#354a5f] flex items-center justify-between px-8 shadow-sm shrink-0">
-        <div className="flex items-center gap-4">
-          <div className="w-[2px] h-5 bg-[#84cc16]" />
-          <h1 className="text-white text-sm font-semibold tracking-tight uppercase">
-            Ares <span className="opacity-70">Enterprise Launchpad </span>
-          </h1>
-        </div>
-        <div className="flex items-center gap-3 text-white/50 text-[10px] font-bold tracking-widest">
-          <ShieldCheck size={14} className="text-[#84cc16]" /> SISTEMA ACTIVO
-        </div>
-      </header>
-
-      {/* Área Central */}
-      <main className="flex-1 flex flex-col items-center justify-center p-8 max-w-7xl mx-auto w-full">
+    <div className="min-h-[calc(100vh-4rem)] bg-white p-8 md:p-12 flex flex-col justify-between select-none">
+      <div className="max-w-5xl mx-auto w-full space-y-10">
         
-        {/* Sección Informativa del Sistema */}
-        <section className="text-center mb-16 max-w-2xl animate-in fade-in duration-1000 slide-in-from-bottom-4">
-          <h2 className="text-4xl font-light text-[#1d2d3e] mb-4">
-            Panel de <span className="font-bold text-[#84cc16]">Planificación</span>
-          </h2>
-          <p className="text-slate-500 text-sm leading-relaxed mb-6 font-medium">
-            Plataforma centralizada para la toma de decisiones estratégicas. 
-            Se integra modelos estadisticos y algoritmos de Inteligencia Artificial para predecir la demanda y 
-            optimizar el flujo de inventario en tiempo real, garantizando la continuidad 
-            operativa y ahorro de costos en toda la cadena de suministro.
+        {/* ENCABEZADO DE BIENVENIDA */}
+        <div className="space-y-2 border-b border-slate-100 pb-6">
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+            Panel de Operaciones
+          </h1>
+          <p className="text-xs text-slate-500 font-medium">
+            Selecciona un módulo
           </p>
-          <div className="flex items-center justify-center gap-6">
-             <div className="flex items-center gap-2 text-[10px] font-black text-[#354a5f] uppercase tracking-tighter">
-                <Activity size={14} className="text-[#84cc16]"/> Sincronización Real-time
-             </div>
-             <div className="flex items-center gap-2 text-[10px] font-black text-[#354a5f] uppercase tracking-tighter">
-                <Target size={14} className="text-[#84cc16]"/> Precisión en Predicción
-             </div>
-          </div>
-        </section>
+        </div>
 
-        {/* Grid Centrado - 3 Columnas */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 w-full max-w-5xl">
-          {modulos.map((mod, index) => (
-            <button
-              key={mod.nombre}
-              onClick={() => router.push(mod.ruta)}
-              className="group flex flex-col bg-white border border-[#d8e0e5] rounded-sm p-8 text-left transition-all duration-500 hover:shadow-2xl hover:border-[#0070d2] relative overflow-hidden h-[220px]"
-              style={{ animationDelay: `${index * 150}ms` }}
+        {/* CONTENEDOR DE TARJETAS / MÓDULOS */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          {modules.map((mod, i) => (
+            <motion.div
+              key={mod.path}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.05, duration: 0.3 }}
+              onClick={() => router.push(mod.path)}
+              className="group relative bg-slate-50 hover:bg-slate-900 border border-slate-200/60 hover:border-slate-900 p-6 rounded-xl transition-all duration-200 cursor-pointer flex flex-col justify-between min-h-[140px] shadow-xs"
             >
-              <div className="absolute top-0 left-0 w-full h-[4px] bg-transparent group-hover:bg-[#0070d2] transition-colors" />
-              
-              <div className="text-[#354a5f] group-hover:text-[#0070d2] transition-all duration-300 group-hover:scale-110 mb-6">
-                {mod.icono}
-              </div>
-
-              <div className="flex-1">
-                <h3 className="font-bold text-sm text-[#1d2d3e] mb-3 tracking-tight group-hover:text-[#0070d2] uppercase">
-                  {mod.nombre}
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="p-2 bg-white text-slate-800 rounded-lg border border-slate-200/60 group-hover:bg-slate-800 group-hover:text-white group-hover:border-slate-700 shadow-xs transition-colors">
+                    {mod.icon}
+                  </div>
+                  {mod.badge && (
+                    <span className="text-[9px] font-bold tracking-wider uppercase bg-white border border-slate-200 text-slate-500 group-hover:bg-slate-800 group-hover:text-slate-300 group-hover:border-slate-700 px-2 py-0.5 rounded-md transition-colors">
+                      {mod.badge}
+                    </span>
+                  )}
+                </div>
+                <h3 className="text-sm font-bold text-slate-900 group-hover:text-white transition-colors tracking-tight">
+                  {mod.title}
                 </h3>
-                <p className="text-[12px] text-slate-400 leading-snug font-medium">
-                  {mod.info}
+                <p className="text-xs text-slate-500 group-hover:text-slate-400 transition-colors mt-1.5 font-medium leading-relaxed max-w-sm">
+                  {mod.description}
                 </p>
               </div>
 
-              <div className="flex items-center justify-between mt-4">
-                <span className="text-[10px] font-black text-[#0070d2] uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-opacity">
-                  Iniciar Gestión
-                </span>
-                <ChevronRight size={18} className="text-[#0070d2] transform group-hover:translate-x-1 transition-transform" />
+              <div className="flex justify-end mt-4">
+                <ArrowRight size={14} className="text-slate-400 group-hover:text-white group-hover:translate-x-1 transition-all" />
               </div>
-            </button>
+            </motion.div>
           ))}
         </div>
+      </div>
 
-      </main>
-
-      {/* Footer SAP Fiori */}
-      <footer className="h-[48px] border-t border-[#d8e0e5] flex items-center justify-between px-10 bg-white text-[10px] text-[#556b82] font-bold uppercase tracking-widest">
-        <span>ARES ENTERPRISE v2.0</span>
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-[#84cc16] animate-pulse" />
-          Sincronizado con Supabase Engine
+      {/* FOOTER INTERNO DEL LAUNCHPAD */}
+      <div className="max-w-5xl mx-auto w-full pt-10 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4 text-[10px] font-medium text-slate-400 tracking-wider">
+        <div className="flex items-center gap-4">
+          <span className="flex items-center gap-1"><Activity size={12} /> Servidores estables</span>
         </div>
-      </footer>
+        <p>SISTEMA DE PLANEAMIENTO Y PREDICCION DE COMPRAS DE MATERIA PRIMA</p>
+      </div>
     </div>
   );
 }

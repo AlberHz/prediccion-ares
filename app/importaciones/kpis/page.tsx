@@ -1,402 +1,415 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
-import { 
-  AlertCircle, Ship, Package, RefreshCw, 
-  BarChart3, Calendar, ChevronDown, ChevronUp, 
-  TrendingDown, Layers, Filter, Activity, 
-  Search, ArrowUpRight, TrendingUp,
-  CheckCircle2
-} from "lucide-react";
-import {
-  XAxis, YAxis, CartesianGrid, Tooltip, 
-  ResponsiveContainer, AreaChart, Area, ReferenceLine, Label
-} from 'recharts';
+import { Search, Ship, TrendingUp, Calendar, Box, AlertTriangle, CheckCircle, LineChart as ChartIcon, ArrowDownToLine } from "lucide-react";
+import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, Label } from "recharts";
 
-// --- COMPONENTES DE UI ---
-
-const KPIStatusCard = ({ title, value, subtitle, icon: Icon, colorClass, loading }: any) => (
-  <div className={`bg-white border-l-4 ${colorClass} p-5 shadow-sm hover:shadow-md transition-all group relative overflow-hidden`}>
-    <div className="flex justify-between items-start">
-      <div>
-        <p className="text-[10px] font-black text-slate-400 uppercase tracking-tighter mb-1">{title}</p>
-        {loading ? (
-          <div className="h-8 w-24 bg-slate-100 animate-pulse rounded" />
-        ) : (
-          <p className="text-3xl font-light tracking-tight text-slate-800">{value}</p>
-        )}
-      </div>
-      <div className={`p-2 rounded-lg ${colorClass.replace('border-', 'bg-')}/10`}>
-        <Icon size={20} className={colorClass.replace('border-', 'text-')} />
-      </div>
-    </div>
-    <div className="mt-4">
-      <span className="text-[9px] font-bold py-0.5 px-2 bg-slate-100 rounded-full text-slate-500 uppercase tracking-wider">
-        {subtitle}
-      </span>
-    </div>
-  </div>
-);
-
-const SectionHeader = ({ title, subtitle, icon: Icon }: any) => (
-  <div className="flex items-center gap-3 mb-4">
-    <div className="p-2 bg-white rounded-lg shadow-sm border border-slate-100">
-      <Icon size={18} className="text-slate-600" />
-    </div>
-    <div>
-      <h2 className="text-sm font-black text-slate-700 uppercase tracking-wider">{title}</h2>
-      <p className="text-[10px] text-slate-400 font-medium">{subtitle}</p>
-    </div>
-  </div>
-);
-
-export default function DashboardLogisticoPro() {
-  const [data, setData] = useState<any[]>([]);
-  const [arribos, setArribos] = useState<any[]>([]);
+/**
+ * ARES SYSTEM - FILTRADO EXCLUSIVO DE ARRIBOS Y MAXIMIZACIÓN DE PANTALLA
+ * Lee únicamente los arribos programados de la tabla 'arrivals'.
+ */
+export default function GraficoPredictivoAres() {
+  const [productos, setProductos] = useState<any[]>([]);
+  const [busqueda, setBusqueda] = useState("");
+  const [mostrarDropdown, setMostrarDropdown] = useState(false);
+  const [skuSeleccionadoId, setSkuSeleccionadoId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [filterFamilia, setFilterFamilia] = useState("TODAS");
-  const [selectedSKU, setSelectedSKU] = useState<string | null>(null);
-  const [expandedMonth, setExpandedMonth] = useState<number | null>(1);
-  const [searchTerm, setSearchTerm] = useState("");
 
-  useEffect(() => { fetchData(); }, []);
+  const AÑO_ACTUAL = 2026;
+  const MES_ACTUAL_NUM = 4; // Mayo es el mes 4 (0-indexed)
+  const DOCUMENTOS_SALIDA = ["NS", "22", "23", "93", "TD"];
 
-  async function fetchData() {
+  useEffect(() => {
+    fetchDataReal();
+  }, []);
+
+  async function fetchDataReal() {
     setLoading(true);
     try {
-      const { data: vData } = await supabase.from("v_importaciones_unidas").select("*");
-      const { data: aData } = await supabase.from("imp_arribos").select("*");
-      setData(vData || []);
-      setArribos(aData || []);
+      const { data: dbProducts } = await supabase.from("products").select("*");
+      const { data: dbArrivals } = await supabase.from("arrivals").select("*");
+
+      let todosLosMovimientos: any[] = [];
+      let desde = 0;
+      let hasta = 999;
+      let tieneMas = true;
+
+      while (tieneMas) {
+        const { data: chunk } = await supabase.from("movements").select("*").range(desde, hasta);
+        if (chunk && chunk.length > 0) {
+          todosLosMovimientos = [...todosLosMovimientos, ...chunk];
+          if (chunk.length < 1000) tieneMas = false;
+          else { desde += 1000; hasta += 1000; }
+        } else { tieneMas = false; }
+      }
+
+      const datosConsolidados = (dbProducts || []).map((p: any) => {
+        const productUUID = p.id;
+        return {
+          id: productUUID,
+          code: p.code ? String(p.code).trim() : "SIN CÓDIGO",
+          description: p.description ? String(p.description).trim() : "SIN DESCRIPCIÓN",
+          family: p.family ? String(p.family).trim() : "GENERAL",
+          lead_time: parseInt(p.lead_time) || 0,
+          stockFisicoActual: Number(p.stock || 0),
+          movimientos: todosLosMovimientos.filter((m: any) => m.product_id === productUUID),
+          // ÚNICA FUENTE DE ARRIBOS AUTORIZADA
+          arribos: dbArrivals ? dbArrivals.filter((a: any) => a.product_id === productUUID) : []
+        };
+      });
+
+      setProductos(datosConsolidados);
+      if (datosConsolidados.length > 0) {
+        setSkuSeleccionadoId(datosConsolidados[0].id);
+        setBusqueda(`[${datosConsolidados[0].code}] ${datosConsolidados[0].description}`);
+      }
     } catch (err) {
-      console.error("Error:", err);
+      console.error("Error Ares Engine Base:", err);
     } finally {
       setLoading(false);
     }
   }
 
-  const analytics = useMemo(() => {
-    if (!data.length) return null;
+  const analisisSku = useMemo(() => {
+    if (!skuSeleccionadoId) return null;
+    const item = productos.find(p => p.id === skuSeleccionadoId);
+    if (!item) return null;
 
-    const processed = data.map(p => {
-      const stock = Math.max(0, Math.floor(parseFloat(p.stock) || 0));
-      const leadTimeDias = parseFloat(p.lead_time) || 30;
-      const leadTimeMeses = leadTimeDias / 30;
-      
-      let history: any[] = [];
-      let totalSalidas = 0;
+    const stockFisicoActual = Number(item.stockFisicoActual || 0);
+    const leadTimeDias = parseInt(item.lead_time) || 0;
 
-      // Escaneo dinámico de columnas de salida (s25_, s26_, etc)
-      Object.keys(p).forEach(key => {
-        if (/^s\d{2}_/i.test(key)) {
-          const valor = Math.abs(parseFloat(p[key]) || 0);
-          totalSalidas += valor;
-          const label = key.replace(/^s\d{2}_/i, '').toUpperCase();
-          history.push({ mes: label, unidades: valor });
-        }
+    // 1. Ritmo de consumo histórico basado en movimientos de salida
+    const todasLasSalidas = item.movimientos.filter((m: any) => {
+      const tipoDoc = String(m.type || "").trim().toUpperCase();
+      const codTrans = String(m.transaction_code || "").trim().toUpperCase();
+      return DOCUMENTOS_SALIDA.includes(tipoDoc) || DOCUMENTOS_SALIDA.includes(codTrans);
+    });
+
+    const unidadesTotalesSalida = todasLasSalidas.reduce((sum: number, curr: any) => sum + Math.abs(Number(curr.quantity || 0)), 0);
+    const mesesConActividad = new Set(todasLasSalidas.map((m: any) => {
+      const fechaObj = m.date ? new Date(m.date) : new Date(m.created_at);
+      return `${fechaObj.getFullYear()}-${fechaObj.getMonth()}`;
+    }));
+
+    const totalMesesPeriodo = mesesConActividad.size > 0 ? mesesConActividad.size : 1;
+    const promedioMensualSalidas = unidadesTotalesSalida / totalMesesPeriodo;
+
+    // Obtener exclusivamente el arribo de la tabla 'arrivals'
+    const totalArribosExclusivos = item.arribos.reduce((sum: number, a: any) => sum + Number(a.quantity || 0), 0);
+    const sugeridoCompra = promedioMensualSalidas > 0 ? (promedioMensualSalidas * (leadTimeDias / 30)) * 1.15 : 0;
+
+    let inventarioCorriente = stockFisicoActual;
+
+    // RECONSTRUCCIÓN HISTÓRICA LIMPIA (Ene-Abr)
+    const datosHistoricosInversos: any[] = [];
+    let stockIterativoPasado = stockFisicoActual;
+
+    for (let m = MES_ACTUAL_NUM - 1; m >= 0; m--) {
+      const movsMes = item.movimientos.filter((mvs: any) => {
+        const f = mvs.date ? new Date(mvs.date) : new Date(mvs.created_at);
+        return f.getMonth() === m && f.getFullYear() === AÑO_ACTUAL;
       });
 
-      const promedio = parseFloat(p.promedio_mensual) || (totalSalidas / (history.length || 1));
-      const cobertura = promedio > 0 ? stock / promedio : (stock > 0 ? 99 : 0);
+      const salidasReales = movsMes.filter((mvs: any) => {
+        const t = String(mvs.type || "").trim().toUpperCase();
+        const c = String(mvs.transaction_code || "").trim().toUpperCase();
+        return DOCUMENTOS_SALIDA.includes(t) || DOCUMENTOS_SALIDA.includes(c);
+      }).reduce((sum: number, curr: any) => sum + Math.abs(Number(curr.quantity || 0)), 0);
 
-      // --- LÓGICA DE SALUD (Basada en Lead Time solicitado) ---
-      let estadoSalud = "OKEY";
-      if (cobertura < 1) estadoSalud = "CRÍTICO";
-      else if (cobertura <= leadTimeMeses) estadoSalud = "RIESGO";
-      else if (stock > (promedio * (leadTimeMeses + 3))) estadoSalud = "SOBRESTOCK";
-      else if (stock > (promedio * (leadTimeMeses + 1))) estadoSalud = "ÓPTIMO";
+      stockIterativoPasado = stockIterativoPasado + salidasReales;
+      datosHistoricosInversos.unshift({
+        mesNum: m,
+        stockProyectado: Math.max(0, stockIterativoPasado),
+        velocidadConsumo: salidasReales,
+        cantidadArribo: 0, // 0 porque no calculamos arribos desde el historial de movimientos
+        tipo: "REAL"
+      });
+    }
 
-      return { 
-        ...p, stock, promedio, cobertura, history, estadoSalud, leadTimeMeses,
-        maxSalida: Math.max(...history.map(h => h.unidades), 0)
-      };
+    // INTERCEPCIÓN EN MES ACTUAL (Mayo 2026)
+    const arribosMayo = item.arribos.filter((a: any) => {
+      const f = a.eta_date ? new Date(a.eta_date) : null;
+      return f && f.getMonth() === MES_ACTUAL_NUM && f.getFullYear() === AÑO_ACTUAL;
     });
+    const totalArribosMayo = arribosMayo.reduce((sum: number, curr: any) => sum + Number(curr.quantity || 0), 0);
 
-    // Quiebres y Riesgo Total (Mes 1 al 5)
-    const quiebres = { m1: [], m2: [], m3: [], m4: [], m5: [] };
-    processed.forEach(p => {
-      for(let i=1; i<=5; i++) {
-        if (p.cobertura >= i-1 && p.cobertura < i) (quiebres as any)[`m${i}`].push(p);
+    const movsMayo = item.movimientos.filter((mvs: any) => {
+      const f = mvs.date ? new Date(mvs.date) : new Date(mvs.created_at);
+      return f.getMonth() === MES_ACTUAL_NUM && f.getFullYear() === AÑO_ACTUAL;
+    });
+    const salidasMayoReal = movsMayo.reduce((sum: number, curr: any) => sum + Math.abs(Number(curr.quantity || 0)), 0);
+    const consumoMayo = salidasMayoReal > 0 ? salidasMayoReal : promedioMensualSalidas;
+
+    // Sumamos el arribo real directo de la tabla de arribos antes de la proyección futura
+    inventarioCorriente = inventarioCorriente + totalArribosMayo;
+
+    const datosMayo = {
+      mesNum: MES_ACTUAL_NUM,
+      stockProyectado: inventarioCorriente,
+      velocidadConsumo: Math.round(consumoMayo),
+      cantidadArribo: totalArribosMayo,
+      tipo: "MES_ACTUAL"
+    };
+
+    inventarioCorriente = Math.max(0, inventarioCorriente - consumoMayo);
+
+    // PROYECCIÓN FUTURA (Junio a Diciembre)
+    const datosFuturos: any[] = [];
+    let yaQuebro = false;
+    let fechaQuiebre = new Date(AÑO_ACTUAL, 11, 31);
+    let mesQuiebreGrafico = "";
+    let mesColocacionOcGrafico = "";
+
+    for (let m = MES_ACTUAL_NUM + 1; m <= 11; m++) {
+      const arribosEsteMes = item.arribos.filter((a: any) => {
+        const f = a.eta_date ? new Date(a.eta_date) : null;
+        return f && f.getMonth() === m && f.getFullYear() === AÑO_ACTUAL;
+      });
+      const entradasOC = arribosEsteMes.reduce((sum: number, curr: any) => sum + Number(curr.quantity || 0), 0);
+
+      inventarioCorriente = inventarioCorriente + entradasOC - promedioMensualSalidas;
+
+      if (inventarioCorriente <= 0 && !yaQuebro) {
+        fechaQuiebre = new Date(AÑO_ACTUAL, m, 1);
+        const nombresMesesArr = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"];
+        mesQuiebreGrafico = `${nombresMesesArr[m]} 26`;
+        yaQuebro = true;
       }
-    });
 
-    const totalRiesgoM1M5 = Object.values(quiebres).reduce((acc, curr) => acc + curr.length, 0);
+      datosFuturos.push({
+        mesNum: m,
+        stockProyectado: Math.max(0, inventarioCorriente),
+        velocidadConsumo: Math.round(promedioMensualSalidas),
+        cantidadArribo: entradasOC,
+        tipo: "PROYECCION"
+      });
+    }
 
-    // ABC Filtrable
-    const dataABC = filterFamilia === "TODAS" ? processed : processed.filter(p => p.familia === filterFamilia);
-    const totalVentas = dataABC.reduce((acc, p) => acc + (p.promedio * 12), 0);
-    let acumulado = 0;
-    const sortedABC = [...dataABC].sort((a, b) => b.promedio - a.promedio).map(p => {
-      acumulado += (p.promedio * 12);
-      const pct = (acumulado / totalVentas) * 100;
-      return { ...p, pct, clase: pct <= 80 ? 'A' : pct <= 95 ? 'B' : 'C' };
-    });
+    if (yaQuebro) {
+      const fechaLimiteOC = new Date(fechaQuiebre);
+      fechaLimiteOC.setDate(fechaLimiteOC.getDate() - leadTimeDias - 30); // 30 días antes del quiebre para margen de seguridad
+      const nombresMesesArr = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"];
+      mesColocacionOcGrafico = `${nombresMesesArr[fechaLimiteOC.getMonth()]} 26`;
+    }
+
+    const nombresMesesArr = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"];
+    const proyeccionesPorMes = [...datosHistoricosInversos, datosMayo, ...datosFuturos].map(d => ({
+      mes: `${nombresMesesArr[d.mesNum]} 26`,
+      stockProyectado: d.stockProyectado,
+      velocidadConsumo: d.velocidadConsumo,
+      cantidadArribo: d.cantidadArribo,
+      info: d.tipo
+    }));
+
+    let fechaLimiteOCStr = "No requiere";
+    if (yaQuebro) {
+      const fechaLimiteOC = new Date(fechaQuiebre);
+      fechaLimiteOC.setDate(fechaLimiteOC.getDate() - leadTimeDias - 30); // 30 días antes del quiebre para margen de seguridad
+      fechaLimiteOCStr = fechaLimiteOC.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: '2-digit' });
+    }
 
     return {
-      processed,
-      sortedABC,
-      quiebres,
-      totalRiesgoM1M5,
-      familias: Array.from(new Set(processed.map(p => p.familia).filter(Boolean))),
-      stats: {
-        critico: processed.filter(p => p.estadoSalud === "CRÍTICO").length,
-        riesgo: processed.filter(p => p.estadoSalud === "RIESGO").length,
-        optimo: processed.filter(p => p.estadoSalud === "ÓPTIMO").length,
-        sobrestock: processed.filter(p => p.estadoSalud === "SOBRESTOCK").length,
-        totalStock: processed.reduce((acc, p) => acc + p.stock, 0)
-      }
+      ...item,
+      stockFisicoActual,
+      consumoIA: promedioMensualSalidas,
+      coberturaMeses: promedioMensualSalidas > 0 ? (stockFisicoActual + totalArribosExclusivos) / promedioMensualSalidas : 0,
+      mesQuiebre: yaQuebro ? mesQuiebreGrafico : "OK / ESTABLE",
+      mesQuiebreGrafico,
+      mesColocacionOcGrafico,
+      fechaLimiteOCStr,
+      pedidoSugerido: sugeridoCompra,
+      enTránsito: totalArribosExclusivos,
+      proyeccionesPorMes
     };
-  }, [data, filterFamilia]);
+  }, [productos, skuSeleccionadoId]);
 
-  const selectedData = useMemo(() => 
-    analytics?.processed.find(p => p.codigo === selectedSKU), [selectedSKU, analytics]
+  const productosFiltrados = productos.filter(p => 
+    p.code.toLowerCase().includes(busqueda.toLowerCase()) || 
+    p.description.toLowerCase().includes(busqueda.toLowerCase())
   );
 
   if (loading) return (
-    <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-900">
-      <RefreshCw size={40} className="animate-spin text-blue-500 mb-4" />
-      <span className="text-white font-black text-xs tracking-[0.3em]">SINCRONIZANDO CD...</span>
+    <div className="min-h-[50vh] flex items-center justify-center bg-[#f8fafc]">
+      <div className="text-center space-y-2">
+        <div className="w-9 h-9 border-2 border-slate-800 border-t-transparent rounded-full animate-spin mx-auto"></div>
+        <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Filtrando y acoplando tabla arrivals de Supabase...</p>
+      </div>
     </div>
   );
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] text-slate-900 pb-10">
-      {/* HEADER */}
-      <header className="h-14 bg-white border-b border-slate-200 px-6 flex items-center justify-between sticky top-0 z-50">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center text-white">
-            <Package size={18} />
-          </div>
-          <h1 className="font-black text-xs uppercase tracking-tighter">SAP Supply Chain <span className="text-blue-600">Planning</span></h1>
-        </div>
-        <button onClick={fetchData} className="text-[10px] font-black bg-slate-100 px-3 py-1.5 rounded hover:bg-slate-200 transition-all flex items-center gap-2">
-          <RefreshCw size={12} /> REFRESCAR DASHBOARD
-        </button>
-      </header>
-
-      <div className="max-w-[1600px] mx-auto p-6 space-y-6">
-        
-        {/* KPI ROW */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <KPIStatusCard title="Stock Total CD" value={analytics?.stats.totalStock.toLocaleString()} subtitle="Unidades Físicas" icon={Package} colorClass="border-slate-800" />
-          <KPIStatusCard title="Riesgo Total (1-5M)" value={analytics?.totalRiesgoM1M5} subtitle="SKUs bajo lead time" icon={AlertCircle} colorClass="border-red-500" />
-          <KPIStatusCard title="Eficiencia Óptima" value={analytics?.stats.optimo} subtitle="Stock balanceado" icon={CheckCircle2} colorClass="border-emerald-500" />
-          <KPIStatusCard title="Exceso Detectado" value={analytics?.stats.sobrestock} subtitle="Capital inmovilizado" icon={TrendingUp} colorClass="border-amber-500" />
-        </div>
-
-        {/* MIDDLE SECTION: SALUD Y ARRIBOS */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-4 space-y-6">
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-              <SectionHeader title="Salud del Inventario" subtitle="Criterio: Stock vs Lead Time" icon={Activity} />
-              <div className="grid grid-cols-2 gap-3 mt-4">
-                <div className="p-4 bg-red-50 rounded-lg border border-red-100">
-                  <p className="text-[10px] font-black text-red-600 uppercase">Crítico (&lt;1M)</p>
-                  <p className="text-2xl font-light">{analytics?.stats.critico}</p>
-                </div>
-                <div className="p-4 bg-orange-50 rounded-lg border border-orange-100">
-                  <p className="text-[10px] font-black text-orange-600 uppercase">En Riesgo (&lt;LT)</p>
-                  <p className="text-2xl font-light">{analytics?.stats.riesgo}</p>
-                </div>
-                <div className="p-4 bg-emerald-50 rounded-lg border border-emerald-100">
-                  <p className="text-[10px] font-black text-emerald-600 uppercase">Óptimo</p>
-                  <p className="text-2xl font-light">{analytics?.stats.optimo}</p>
-                </div>
-                <div className="p-4 bg-blue-50 rounded-lg border border-blue-100">
-                  <p className="text-[10px] font-black text-blue-600 uppercase">Sobrestock</p>
-                  <p className="text-2xl font-light">{analytics?.stats.sobrestock}</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-              <div className="p-4 bg-slate-50 border-b flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Calendar size={14} className="text-slate-400" />
-                  <span className="text-[10px] font-black uppercase text-slate-500">Cronograma de Quiebre</span>
-                </div>
-              </div>
-              <div className="divide-y divide-slate-100">
-                {[1, 2, 3, 4, 5].map(m => (
-                  <div key={m}>
-                    <button onClick={() => setExpandedMonth(expandedMonth === m ? null : m)} className="w-full p-4 flex justify-between items-center hover:bg-slate-50">
-                      <span className="text-[11px] font-bold text-slate-600 tracking-tight">Mes de Quiebre: {m}</span>
-                      <div className="flex items-center gap-2">
-                        <span className="px-2 py-0.5 bg-red-100 text-red-700 text-[10px] font-black rounded-full">{(analytics?.quiebres as any)[`m${m}`].length}</span>
-                        {expandedMonth === m ? <ChevronUp size={14}/> : <ChevronDown size={14}/>}
-                      </div>
-                    </button>
-                    {expandedMonth === m && (
-                      <div className="bg-slate-50/50 max-h-48 overflow-y-auto p-2 space-y-1 custom-scrollbar">
-                        {(analytics?.quiebres as any)[`m${m}`].map((p: any) => (
-                          <div key={p.codigo} className="bg-white p-2 border border-slate-100 rounded text-[10px] flex justify-between items-center">
-                            <span className="font-bold">{p.codigo}</span>
-                            <span className="text-red-500 font-black">{p.cobertura.toFixed(1)}m</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="lg:col-span-8 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
-            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/30">
-              <SectionHeader title="Monitor de Arribos" subtitle="Tránsitos y ETAs confirmadas" icon={Ship} />
-            </div>
-            <div className="flex-1 overflow-auto custom-scrollbar">
-              <table className="w-full text-left">
-                <thead className="sticky top-0 bg-white border-b text-[9px] font-black text-slate-400 uppercase tracking-widest">
-                  <tr>
-                    <th className="p-4">SKU / Identificador</th>
-                    <th className="p-4">Contenedor</th>
-                    <th className="p-4 text-center">Cantidad</th>
-                    <th className="p-4 text-center">ETA CD</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {arribos.map((a, i) => (
-                    <tr key={i} className="hover:bg-blue-50/30 transition-colors">
-                      <td className="p-4 text-[11px] font-bold text-slate-700">{a.codigo}</td>
-                      <td className="p-4 text-[10px] font-medium text-blue-500">{a.contenedor || 'EN TRÁNSITO'}</td>
-                      <td className="p-4 text-center font-mono font-bold text-xs">{Math.floor(a.arribo).toLocaleString()}</td>
-                      <td className="p-4 text-center">
-                        <span className="bg-slate-100 px-2 py-1 rounded text-[10px] font-bold">{a.fecha_arribo || 'POR CONFIRMAR'}</span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+    // CAMBIO DE DISEÑO: w-full total sin restricciones laterales rígidas para ocupar toda la pantalla
+    <div className="bg-[#f8fafc] p-2 sm:p-5 rounded-xl border border-slate-200 shadow-sm space-y-6 w-full mx-auto text-slate-800 font-sans">
+      
+      {/* CONTROLADOR DE BÚSQUEDA */}
+      <div className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm relative">
+        <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-1.5">
+          Eje de Control Predictivo de Suministros (Filtro estricto de Tabla Arrivals)
+        </label>
+        <div className="relative">
+          <Search className="absolute left-3 top-2.5 text-slate-400" size={14} />
+          <input
+            type="text"
+            placeholder="Escribe código de material..."
+            className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-semibold outline-none focus:bg-white focus:border-purple-600 transition-all text-slate-900"
+            value={busqueda}
+            onChange={(e) => {
+              setBusqueda(e.target.value);
+              setMostrarDropdown(true);
+            }}
+            onFocus={() => setMostrarDropdown(true)}
+          />
         </div>
 
-        {/* BOTTOM SECTION: ABC Y GRÁFICO */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-8 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden h-[600px] flex flex-col">
-            <div className="p-5 border-b flex items-center justify-between bg-white">
-              <SectionHeader title="Clasificación ABC" subtitle="Análisis de Pareto por Familia" icon={TrendingDown} />
-              <div className="flex gap-2">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
-                  <input 
-                    type="text" placeholder="Buscar SKU..." 
-                    className="pl-9 pr-4 py-2 bg-slate-100 border-none rounded-lg text-xs font-bold"
-                    onChange={(e) => setSearchTerm(e.target.value.toUpperCase())}
-                  />
+        {mostrarDropdown && productosFiltrados.length > 0 && (
+          <div className="absolute z-50 w-full left-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl max-h-[250px] overflow-y-auto text-[11px]">
+            {productosFiltrados.map((p) => (
+              <div
+                key={p.id}
+                className="p-3 hover:bg-slate-50 border-b border-slate-100 cursor-pointer flex justify-between items-center"
+                onClick={() => {
+                  setSkuSeleccionadoId(p.id);
+                  setBusqueda(`[${p.code}] ${p.description}`);
+                  setMostrarDropdown(false);
+                }}
+              >
+                <div>
+                  <span className="font-bold text-slate-900">SKU: {p.code}</span>
+                  <p className="text-[10px] text-slate-400 uppercase truncate max-w-[600px]">{p.description}</p>
                 </div>
-                <select 
-                  className="px-4 py-2 bg-slate-900 text-white text-[10px] font-black rounded-lg uppercase"
-                  value={filterFamilia} onChange={(e) => setFilterFamilia(e.target.value)}
-                >
-                  <option value="TODAS">TODAS LAS FAMILIAS</option>
-                  {analytics?.familias.map(f => <option key={f} value={f}>{f}</option>)}
-                </select>
+                <span className="bg-purple-50 border border-purple-100 text-purple-700 px-2.5 py-1 rounded font-bold text-[10px]">
+                  Stock Base: {(p.stockFisicoActual ?? 0).toLocaleString()}
+                </span>
               </div>
-            </div>
-            <div className="flex-1 overflow-auto custom-scrollbar">
-              <table className="w-full text-left">
-                <thead className="sticky top-0 bg-slate-50 text-[9px] font-black text-slate-400 uppercase border-b">
-                  <tr>
-                    <th className="p-4">Producto</th>
-                    <th className="p-4 text-center">Promedio Mensual</th>
-                    <th className="p-4 text-center">Stock CD</th>
-                    <th className="p-4 text-center">Cobertura</th>
-                    <th className="p-4 text-center">Salud</th>
-                    <th className="p-4 text-center">Clase</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {analytics?.sortedABC
-                    .filter(p => p.codigo.includes(searchTerm) || p.descripcion.includes(searchTerm))
-                    .map((p, i) => (
-                    <tr key={i} onClick={() => setSelectedSKU(p.codigo)} className={`hover:bg-blue-50 cursor-pointer ${selectedSKU === p.codigo ? 'bg-blue-50' : ''}`}>
-                      <td className="p-4">
-                        <p className="text-[11px] font-black text-slate-800">{p.codigo}</p>
-                        <p className="text-[9px] text-slate-400 uppercase truncate w-60">{p.descripcion}</p>
-                      </td>
-                      <td className="p-4 text-center font-mono text-xs text-blue-600 font-bold">{Math.floor(p.promedio).toLocaleString()}</td>
-                      <td className="p-4 text-center font-mono text-xs font-bold">{p.stock.toLocaleString()}</td>
-                      <td className="p-4 text-center">
-                        <span className={`text-[10px] font-black ${p.cobertura < 1 ? 'text-red-500' : 'text-slate-700'}`}>
-                          {p.cobertura.toFixed(1)} M
-                        </span>
-                      </td>
-                      <td className="p-4 text-center">
-                        <span className={`text-[8px] font-black px-2 py-1 rounded-full ${
-                          p.estadoSalud === 'CRÍTICO' ? 'bg-red-100 text-red-600' : 
-                          p.estadoSalud === 'RIESGO' ? 'bg-orange-100 text-orange-600' : 'bg-emerald-100 text-emerald-600'
-                        }`}>
-                          {p.estadoSalud}
-                        </span>
-                      </td>
-                      <td className="p-4 text-center">
-                        <span className={`w-6 h-6 flex items-center justify-center rounded text-[10px] font-black mx-auto ${
-                          p.clase === 'A' ? 'bg-emerald-500 text-white' : p.clase === 'B' ? 'bg-blue-500 text-white' : 'bg-slate-200'
-                        }`}>
-                          {p.clase}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            ))}
           </div>
-
-          <div className="lg:col-span-4 bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-[600px] flex flex-col">
-            <SectionHeader title="Histórico de Salidas" subtitle={selectedSKU || "Seleccione un SKU"} icon={BarChart3} />
-            <div className="flex-1 mt-6">
-              {selectedSKU ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={selectedData?.history}>
-                    <defs>
-                      <linearGradient id="colorSal" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.4}/>
-                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis dataKey="mes" axisLine={false} tickLine={false} tick={{fontSize: 9, fontWeight: 700}} />
-                    <YAxis axisLine={false} tickLine={false} tick={{fontSize: 9, fontWeight: 700}} />
-                    <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}} />
-                    <Area type="monotone" dataKey="unidades" stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorSal)" />
-                    {/* Referencia de Pico Máximo */}
-                    <ReferenceLine y={selectedData?.maxSalida} stroke="#ef4444" strokeDasharray="3 3">
-                      <Label value="PICO MAX" position="top" fill="#ef4444" fontSize={8} fontWeight={900} />
-                    </ReferenceLine>
-                  </AreaChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="h-full w-full flex items-center justify-center bg-slate-50 rounded-xl border-2 border-dashed border-slate-200">
-                  <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Seleccione un SKU en la tabla</p>
-                </div>
-              )}
-            </div>
-            {selectedSKU && (
-              <div className="mt-6 p-4 bg-slate-50 rounded-lg border border-slate-100">
-                <div className="flex justify-between items-center mb-2">
-                  <span className="text-[10px] font-black text-slate-400 uppercase">Promedio Mensual</span>
-                  <span className="text-sm font-bold text-slate-700">{Math.floor(selectedData?.promedio).toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-[10px] font-black text-slate-400 uppercase">Lead Time (M)</span>
-                  <span className="text-sm font-bold text-blue-600">{selectedData?.leadTimeMeses.toFixed(1)}</span>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+        )}
       </div>
 
-      <style jsx global>{`
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
-      `}</style>
+      {analisisSku ? (
+        <>
+          {/* GRIDS KPI ADAPTATIVOS */}
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3">
+              <div className="p-2 bg-slate-100 rounded-lg text-slate-600 hidden sm:block"><Box size={14} /></div>
+              <div>
+                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Stock Base (Mayo)</p>
+                <p className="text-sm font-black text-slate-900">{Number(analisisSku.stockFisicoActual ?? 0).toLocaleString()} un.</p>
+              </div>
+            </div>
+
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3">
+              <div className="p-2 bg-purple-50 rounded-lg text-purple-600 hidden sm:block"><TrendingUp size={14} /></div>
+              <div>
+                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Ritmo Consumo</p>
+                <p className="text-sm font-black text-purple-700">{Math.round(analisisSku.consumoIA ?? 0).toLocaleString()} un/mes</p>
+              </div>
+            </div>
+
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3">
+              <div className="p-2 bg-blue-50 rounded-lg text-blue-600 hidden sm:block"><Ship size={14} /></div>
+              <div>
+                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Tabla Arrivals Real</p>
+                <p className="text-sm font-black text-blue-700">{Number(analisisSku.enTránsito ?? 0).toLocaleString()} un.</p>
+              </div>
+            </div>
+
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3">
+              <div className="p-2 bg-rose-50 rounded-lg text-rose-600 hidden sm:block"><AlertTriangle size={14} /></div>
+              <div>
+                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Quiebre Proyectado</p>
+                <p className={`text-sm font-black ${analisisSku.mesQuiebre !== "OK / ESTABLE" ? 'text-rose-600' : 'text-emerald-600'}`}>
+                  {analisisSku.mesQuiebre}
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-slate-900 p-4 rounded-xl shadow-md flex items-center gap-3 text-white col-span-2 md:col-span-1">
+              <div>
+                <p className="text-[9px] font-bold text-emerald-400 uppercase tracking-wider">Fecha Límite OC</p>
+                <p className="text-xs font-black text-white">{analisisSku.fechaLimiteOCStr}</p>
+                <p className="text-[9px] text-slate-400 font-medium">Sugerido: <span className="text-emerald-400 font-bold">{Math.round(analisisSku.pedidoSugerido ?? 0).toLocaleString()}</span></p>
+              </div>
+            </div>
+          </div>
+
+          {/* CONTENEDOR EXPANDIDO AL 100% DE LA PANTALLA */}
+          <div className="bg-white p-3 sm:p-6 rounded-xl border border-slate-200 shadow-sm space-y-4 w-full">
+            <div className="border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-1.5 text-xs font-black text-slate-900 uppercase tracking-wider">
+                <ChartIcon size={13} className="text-purple-600" />
+                <span>Simulación Dinámica de Inventarios (Eje de Carga Única por Arrivals)</span>
+              </div>
+            </div>
+
+            {/* Ajuste de márgenes de Recharts para que explote a los bordes de la pantalla */}
+            <div className="w-full h-[400px] text-[10px] font-bold">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={analisisSku.proyeccionesPorMes} margin={{ top: 20, right: 10, left: -25, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="colorStockExpanded" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.25}/>
+                      <stop offset="95%" stopColor="#4f46e5" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="mes" tickLine={false} stroke="#94a3b8" />
+                  <YAxis tickLine={false} stroke="#94a3b8" />
+                  <Tooltip 
+                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '6px', color: '#f8fafc' }}
+                    itemStyle={{ color: '#cbd5e1', fontSize: '11px' }}
+                  />
+                  
+                  <Area type="monotone" dataKey="stockProyectado" name="Stock en Planta" stroke="#4f46e5" strokeWidth={3} fillOpacity={1} fill="url(#colorStockExpanded)" />
+                  <Area type="monotone" dataKey="velocidadConsumo" name="Consumo Mensual" stroke="#f43f5e" strokeWidth={1} strokeDasharray="3 3" fillOpacity={0} />
+
+                  {/* HITOS */}
+                  {analisisSku.mesColocacionOcGrafico && (
+                    <ReferenceLine x={analisisSku.mesColocacionOcGrafico} stroke="#f59e0b" strokeWidth={2}>
+                      <Label value="EMITIR OC" position="top" fill="#d97706" fontSize={9} fontWeight="bold" />
+                    </ReferenceLine>
+                  )}
+
+                  {analisisSku.mesQuiebreGrafico && (
+                    <ReferenceLine x={analisisSku.mesQuiebreGrafico} stroke="#ef4444" strokeWidth={2} strokeDasharray="3 3">
+                      <Label value="QUIEBRE DE STOCK" position="top" fill="#ef4444" fontSize={9} fontWeight="bold" />
+                    </ReferenceLine>
+                  )}
+
+                  {/* RENDERIZADO EXCLUSIVO DEL ARRIBO DE LA TABLA ARRIVALS */}
+                  {analisisSku.proyeccionesPorMes.map((p: any, idx: number) => {
+                    if (p.cantidadArribo > 0) {
+                      return (
+                        <ReferenceLine key={idx} x={p.mes} stroke="#10b981" strokeWidth={2.5}>
+                          <Label 
+                            value={`INGRESO ARRIVALS: +${p.cantidadArribo.toLocaleString()} un.`} 
+                            position="insideTopLeft" 
+                            fill="#047857" 
+                            fontSize={10} 
+                            fontWeight="black" 
+                          />
+                        </ReferenceLine>
+                      );
+                    }
+                    return null;
+                  })}
+
+                  <ReferenceLine y={0} stroke="#cbd5e1" strokeWidth={1} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="flex items-center gap-2 bg-slate-50 p-2.5 rounded-lg text-[10px] text-slate-500 font-medium">
+              <CheckCircle size={12} className="text-emerald-600" />
+              <span>Filtro de contingencia activado: Se eliminaron las trazas de movimientos duplicados. Solo se procesa la orden de la tabla `arrivals`.</span>
+            </div>
+          </div>
+        </>
+      ) : (
+        <div className="text-center py-16 text-slate-400 text-xs font-medium uppercase tracking-wider bg-white rounded-xl border border-slate-200">
+          Selecciona un material para renderizar la simulación a pantalla completa.
+        </div>
+      )}
     </div>
   );
 }

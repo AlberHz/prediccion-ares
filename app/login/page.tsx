@@ -3,12 +3,13 @@ import { useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Lock, Mail, ChevronRight, AlertCircle, BarChart3, BrainCircuit, Zap } from "lucide-react";
+import { Lock, Mail, ChevronRight, AlertCircle, BarChart3, BrainCircuit, Zap, Eye, EyeOff } from "lucide-react";
 import CountUp from 'react-countup';
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
@@ -18,150 +19,183 @@ export default function LoginPage() {
     setLoading(true);
     setError(null);
 
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
 
-    if (error) {
-      setError("Acceso denegado. Verifique credenciales de analista.");
+    if (authError) {
+      setError(authError.status === 400 ? "Credenciales incorrectas. Verifique el correo o contraseña." : authError.message);
       setLoading(false);
     } else {
-      router.push("/");
+      // Redirección directa al flujo de predicciones y compras proyectadas
+      router.push("/importaciones/predicciones");
     }
   };
 
-  // Datos decorativos para el feeling predictivo
   const stats = [
-    { label: "Nivel de Certeza IA", value: 94.8, suffix: "%", icon: BrainCircuit },
+    { label: "Nivel de Certeza Estadístico", value: 94.8, suffix: "%", icon: BrainCircuit },
     { label: "SKUs Monitoreados", value: 1500, suffix: "+", icon: Zap },
   ];
 
   return (
-    <div className="relative flex min-h-screen bg-[#fbfcfb] overflow-hidden font-sans">
+    <div className="relative flex min-h-screen bg-slate-50 overflow-hidden font-sans select-none antialiased text-slate-900">
       
-      {/* SECCIÓN IZQUIERDA: PANEL DE DATOS PREDICTIVOS ( feeling tecnológico ) */}
-      <div className="relative hidden lg:flex lg:w-1/2 bg-white border-r border-slate-100 flex-col justify-between p-16 overflow-hidden">
+      {/* SECCIÓN IZQUIERDA: PANEL DE DATOS PREDICTIVOS */}
+      <div className="relative hidden lg:flex lg:w-1/2 bg-white border-r border-slate-200/60 flex-col justify-between p-16 overflow-hidden">
         
-        {/* Patrón de red sutil en el fondo */}
-        <div className="absolute inset-0 opacity-[0.03]" 
-             style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg width=\'60\' height=\'60\' viewBox=\'0 0 60 60\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cg fill=\'none\' fill-rule=\'evenodd\'%3E%3Cg fill=\'\%2384cc16\' fill-opacity=\'0.4\'%3E%3Cpath d=\'M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z\'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")' }} 
+        {/* Patrón de red corporativo sutil monocromático */}
+        <div className="absolute inset-0 opacity-[0.015]" 
+             style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg width=\'60\' height=\'60\' viewBox=\'0 0 60 60\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cg fill=\'none\' fill-rule=\'evenodd\'%3E%3Cg fill=\'\%230f172a\' fill-opacity=\'0.8\'%3E%3Cpath d=\'M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z\'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")' }} 
         />
 
         <div className="relative z-10">
-          <img src="/logo.png" alt="ARES Logo" className="h-14 w-auto mb-16 drop-shadow-sm" />
+          <div className="flex items-center gap-2 mb-16">
+            <div className="w-8 h-8 bg-slate-900 rounded-lg flex items-center justify-center text-white text-sm font-bold font-mono shadow-md">A</div>
+            <span className="text-sm font-bold tracking-wider uppercase text-slate-800">Ares System</span>
+          </div>
           
-          <motion.div initial={{opacity:0, x:-20}} animate={{opacity:1, x:0}} transition={{delay:0.2}} className="space-y-4 max-w-lg">
-            <h1 className="text-5xl font-extrabold text-slate-950 tracking-tighter leading-tight uppercase italic">
-              Predicción de <span className="text-[#84cc16] not-italic">Demanda</span> y Suministros
+          <motion.div initial={{opacity:0, y:12}} animate={{opacity:1, y:0}} transition={{duration: 0.4}} className="space-y-4 max-w-lg">
+            <h1 className="text-4xl font-extrabold text-slate-900 tracking-tight leading-tight">
+              Proyección de <span className="text-slate-800 underline decoration-slate-300 decoration-4 underline-offset-4">Demanda</span> <br /> y Flujo de Compras.
             </h1>
-            <p className="text-xl text-slate-600 font-medium leading-relaxed">
-              Plataforma avanzada de Inteligencia para la optimización de compras de Materia Prima y Suministros.
+            <p className="text-sm text-slate-500 font-medium leading-relaxed">
+              Plataforma analítica avanzada y automatizada para la simulación de importaciones, cálculo de Lead Times y abastecimiento de materias primas.
             </p>
           </motion.div>
         </div>
 
-        {/* STATS PANELES (Feeling de Dashboard) */}
-        <div className="relative z-10 grid grid-cols-2 gap-8">
+        {/* METRICAS (Estilo Linear / Vercel) */}
+        <div className="relative z-10 grid grid-cols-2 gap-6">
           {stats.map((stat, i) => (
             <motion.div 
               key={i}
-              initial={{opacity:0, y:20}} animate={{opacity:1, y:0}} transition={{delay: 0.4 + (i*0.1)}}
-              className="bg-[#f7faf7] border border-[#e8f1e8] p-8 rounded-3xl flex items-start gap-6 shadow-sm"
+              initial={{opacity:0, y:12}} animate={{opacity:1, y:0}} transition={{delay: 0.15 + (i*0.08)}}
+              className="bg-slate-50 border border-slate-200/50 p-5 rounded-xl flex items-center gap-4 shadow-xs"
             >
-              <div className="p-3 bg-white rounded-xl text-[#84cc16] border border-[#e8f1e8] shadow-inner">
-                <stat.icon size={28} strokeWidth={1.5}/>
+              <div className="p-2.5 bg-white rounded-lg text-slate-700 border border-slate-200/60 shadow-xs">
+                <stat.icon size={20} strokeWidth={2}/>
               </div>
               <div>
-                <div className="text-4xl font-black text-slate-950 tracking-tight">
-                  <CountUp end={stat.value} decimals={stat.value % 1 !== 0 ? 1 : 0} duration={3} />
-                  <span className="text-[#84cc16] ml-1">{stat.suffix}</span>
+                <div className="text-2xl font-bold text-slate-900 tracking-tight">
+                  <CountUp end={stat.value} decimals={stat.value % 1 !== 0 ? 1 : 0} duration={2} />
+                  <span className="text-slate-500 text-lg font-medium ml-0.5">{stat.suffix}</span>
                 </div>
-                <p className="text-sm font-semibold text-slate-500 uppercase tracking-wider mt-1">{stat.label}</p>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">{stat.label}</p>
               </div>
             </motion.div>
           ))}
         </div>
       </div>
 
-      {/* SECCIÓN DERECHA: FORMULARIO DE LOGINS ( Glassmorphism Light ) */}
-      <div className="w-full lg:w-1/2 flex items-center justify-center p-8 md:p-16 relative">
-        
-        {/* Decoración geométrica sutil */}
-        <div className="absolute top-0 right-0 w-64 h-64 bg-[#84cc16]/5 rounded-bl-full blur-[60px]" />
+      {/* SECCIÓN DERECHA: FORMULARIO DE ACCESO */}
+      <div className="w-full lg:w-1/2 flex items-center justify-center p-6 md:p-16 relative bg-slate-50">
         
         <motion.div 
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.5 }}
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35 }}
           className="w-full max-w-md relative z-10"
         >
-          {/* Logo para versión móvil (oculto en escritorio) */}
-          <div className="lg:hidden flex justify-center mb-10">
-            <img src="/logo.png" alt="ARES Logo" className="h-12 w-auto" />
+          {/* Logo móvil */}
+          <div className="lg:hidden flex justify-center items-center gap-2 mb-8">
+            <div className="w-8 h-8 bg-slate-900 rounded-lg flex items-center justify-center text-white text-sm font-bold font-mono">A</div>
+            <span className="text-sm font-bold tracking-wider uppercase text-slate-800">Ares System</span>
           </div>
 
-          {/* CARD WHITE - Efecto de Elevación Avanzada */}
-          <div className="bg-white/80 backdrop-blur-xl border border-slate-100 p-10 rounded-[2.5rem] shadow-[0_25px_60px_-15px_rgba(0,0,0,0.06)]">
+          {/* CARD DE LOGIN */}
+          <div className="bg-white border border-slate-200/60 p-8 md:p-10 rounded-2xl shadow-sm">
             
-            <div className="flex items-center gap-4 mb-10 pb-6 border-b border-slate-100">
-                <div className="p-3 bg-[#f0f9f0] text-[#84cc16] rounded-2xl border border-[#e1f1e1]">
-                    <BarChart3 size={24}/>
-                </div>
-                <div>
-                    <h2 className="text-[11px] font-black text-slate-400 uppercase tracking-[0.3em]">Módulo de Inteligencia</h2>
-                    <p className="text-2xl font-black text-slate-900 tracking-tighter uppercase italic">Confirme sus <span className="text-[#84cc16] not-italic">Credenciales</span></p>
-                </div>
+            <div className="flex items-center gap-3.5 mb-8 pb-5 border-b border-slate-100">
+              <div className="p-2.5 bg-slate-50 text-slate-800 rounded-lg border border-slate-200/60 shadow-xs">
+                <BarChart3 size={18}/>
+              </div>
+              <div>
+                <h2 className="text-[9px] font-bold text-slate-400 uppercase tracking-[0.18em]">Módulo Control de Inventarios</h2>
+                <p className="text-lg font-bold text-slate-900 tracking-tight">Ingreso al Sistema</p>
+              </div>
             </div>
 
-            <form onSubmit={handleLogin} className="space-y-6">
-              <div className="space-y-2 relative">
-                <Mail className="absolute left-4 top-[48px] text-slate-300 transition-colors group-focus-within:text-[#84cc16]" size={20} />
-                <label className="text-[11px] font-bold text-slate-500 uppercase tracking-[0.2em] ml-1">Email Corporativo</label>
-                <input
-                  type="email"
-                  className="w-full bg-slate-50 border border-slate-100 p-4 pl-12 rounded-xl text-slate-800 outline-none focus:bg-white focus:ring-2 focus:ring-[#84cc16]/10 focus:border-[#84cc16] transition-all placeholder:text-slate-300 text-sm font-medium"
-                  placeholder="tunonmbre@aresperu.com"
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                />
+            <form onSubmit={handleLogin} className="space-y-5">
+              {/* INPUT: EMAIL */}
+              <div className="space-y-1.5 relative group">
+                <label className="text-[11px] font-bold text-slate-500 tracking-tight ml-0.5">Correo Corporativo</label>
+                <div className="relative">
+                  <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-slate-900 transition-colors" size={16} />
+                  <input
+                    type="email"
+                    className="w-full bg-slate-50 border border-slate-200 p-3 pl-10 rounded-lg text-slate-800 outline-none focus:bg-white focus:ring-4 focus:ring-slate-900/5 focus:border-slate-900 transition-all placeholder:text-slate-400 text-xs font-medium"
+                    placeholder="ejemplo@aresperu.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                  />
+                </div>
               </div>
 
-              <div className="space-y-2 relative">
-                <Lock className="absolute left-4 top-[48px] text-slate-300 transition-colors group-focus-within:text-[#84cc16]" size={20} />
-                <label className="text-[11px] font-bold text-slate-500 uppercase tracking-[0.2em] ml-1">Clave de Acceso</label>
-                <input
-                  type="password"
-                  className="w-full bg-slate-50 border border-slate-100 p-4 pl-12 rounded-xl text-slate-800 outline-none focus:bg-white focus:ring-2 focus:ring-[#84cc16]/10 focus:border-[#84cc16] transition-all placeholder:text-slate-300 text-sm"
-                  placeholder="••••••••"
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
+              {/* INPUT: PASSWORD */}
+              <div className="space-y-1.5 relative group">
+                <label className="text-[11px] font-bold text-slate-500 tracking-tight ml-0.5">Clave de Acceso</label>
+                <div className="relative">
+                  <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-slate-900 transition-colors" size={16} />
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    className="w-full bg-slate-50 border border-slate-200 p-3 pl-10 pr-10 rounded-lg text-slate-800 outline-none focus:bg-white focus:ring-4 focus:ring-slate-900/5 focus:border-slate-900 transition-all placeholder:text-slate-400 text-xs font-medium"
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                  >
+                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
               </div>
 
-              <AnimatePresence>
+              {/* ALERTA DE ERROR */}
+              <AnimatePresence mode="wait">
                 {error && (
-                  <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{opacity: 0}} className="flex items-center gap-3 text-red-600 bg-red-50 p-4 rounded-xl border border-red-100 text-xs font-semibold shadow-inner">
-                    <AlertCircle size={18} />
-                    {error}
+                  <motion.div 
+                    initial={{ opacity: 0, y: -6 }} 
+                    animate={{ opacity: 1, y: 0 }} 
+                    exit={{ opacity: 0, y: -6 }} 
+                    className="flex items-start gap-2.5 text-slate-800 bg-red-50 p-3 rounded-lg border border-red-200/60 text-[11px] font-medium shadow-xs"
+                  >
+                    <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-600" />
+                    <span>{error}</span>
                   </motion.div>
                 )}
               </AnimatePresence>
 
+              {/* BOTÓN DE LOGIN */}
               <motion.button
-                whileHover={{ scale: 1.02, backgroundColor: "#76b813" }}
-                whileTap={{ scale: 0.98 }}
+                whileHover={{ y: -0.5 }}
+                whileTap={{ y: 0 }}
                 disabled={loading}
-                className="w-full bg-[#84cc16] p-5 text-white font-extrabold rounded-xl shadow-lg shadow-[#84cc16]/30 transition-all flex items-center justify-center gap-3 disabled:opacity-50 uppercase tracking-widest text-sm"
+                className="w-full bg-slate-900 hover:bg-slate-800 active:bg-slate-950 p-3 text-white font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 disabled:opacity-60 text-xs tracking-wide shadow-sm"
               >
-                {loading ? "VERIFICANDO..." : "ACCEDER AL MOTOR PREDICTIVO"}
-                {!loading && <ChevronRight size={20} className="mt-0.5" />}
+                {loading ? (
+                  <span className="flex items-center gap-2">
+                    <svg className="animate-spin h-3.5 w-3.5 text-white" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    Procesando acceso...
+                  </span>
+                ) : (
+                  <>
+                    Ingresar al Sistema Predictivo
+                    <ChevronRight size={14} />
+                  </>
+                )}
               </motion.button>
             </form>
           </div>
           
-          <footer className="mt-12 text-center text-slate-400 text-[10px] font-medium tracking-[0.2em] uppercase">
-            ARES IBP Planning Core v1.0 | © 2026 Supply Chain
-            <br/>
-            <br/>
-            Desarrollaod por Alber Hernández
+          <footer className="mt-8 text-center text-slate-400 text-[9px] font-medium tracking-wider space-y-1">
+            <p>ARES IBP Planning Core v1.0 | © 2026 Supply Chain</p>
+            <p className="text-slate-400/70 font-semibold">Desarrollado por Alber Hernández</p>
           </footer>
         </motion.div>
       </div>

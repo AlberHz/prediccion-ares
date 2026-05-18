@@ -1,353 +1,322 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
-import { 
-  Search, Eye, BarChart3, X, Package, AlertTriangle, ArrowDownToLine, Clock, Ship, EyeOff, Power, CheckCircle2
-} from "lucide-react";
-import {
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-  ReferenceLine, Area, ComposedChart, Bar, Scatter, Label, ReferenceArea
-} from "recharts";
+import { Search, ArrowDownToLine, Ship, TrendingUp, Calendar, EyeOff, Eye } from "lucide-react";
 
 /**
- * MÓDULO DE ABASTECIMIENTO SAP - VERSIÓN CORREGIDA (LLAVE ÚNICA Y SUMA DE ARRIBOS)
+ * ARES SYSTEM - MÓDULO PREDICCIONES (PROMEDIO MENSUAL REPARADO)
+ * - Absorbe el historial completo superando el límite de Supabase.
+ * - Calcula el promedio dividiendo el total entre los meses con salidas desde el origen del archivo.
+ * - Soporta borrado lógico persistente y restablecimiento directo desde UI.
  */
 
-const MESES_ABR_GLOBAL = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"];
-
-export default function ModuloAbastecimientoSAP() {
-  // --- ESTADOS ---
-  const [maestro, setMaestro] = useState<any[]>([]);
+export default function ModuloPredicciones() {
+  const [productos, setProductos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filtroEstado, setFiltroEstado] = useState("TODOS");
   const [filtroFamilia, setFiltroFamilia] = useState("TODOS");
-  const [itemSeleccionado, setItemSeleccionado] = useState<any>(null);
-  
-  const [verCapasTecnicas, setVerCapasTecnicas] = useState(true);
-  const [verSoloInactivos, setVerSoloInactivos] = useState(false);
+  const [mostrarOcultos, setMostrarOcultos] = useState(false); // false = Activos, true = Archivados
 
-  // Configuración Temporal (Mayo 2026 como punto de partida)
-  const MES_ACTUAL_INDEX = 4; 
   const AÑO_ACTUAL = 2026;
+  const MES_INICIO_PROYECCION = 4; // Mayo
 
-  useEffect(() => { fetchData(); }, []);
+  // Documentos oficiales de salida indicados
+  const DOCUMENTOS_SALIDA = ["NS", "22", "23", "93", "TD"];
 
-  async function fetchData() {
+  useEffect(() => {
+    fetchDataReal();
+  }, [mostrarOcultos]); // Recarga de forma limpia al cambiar de vista
+
+  async function fetchDataReal() {
     setLoading(true);
     try {
-      // 1. Traemos los datos de la vista y de la tabla de arribos
-      const { data: maestroData, error: e1 } = await supabase.from("v_importaciones_unidas").select("*");
-      const { data: arribosData, error: e2 } = await supabase.from("imp_arribos").select("*");
-      
-      if (e1 || e2) throw e1 || e2;
+      const { data: dbProducts, error: errProd } = await supabase.from("products").select("*");
+      const { data: dbArrivals, error: errArr } = await supabase.from("arrivals").select("*");
 
-      // 2. ELIMINAR DUPLICADOS DEL MAESTRO (Garantía total de unicidad para React Keys)
-      // Usamos un Map para asegurar que cada 'codigo' exista una sola vez en el estado maestro
-      const maestroUnico = new Map();
-      
-      maestroData?.forEach(item => {
-        if (!item.codigo) return;
-        const idLimpio = String(item.codigo).trim();
-        if (!maestroUnico.has(idLimpio)) {
-          maestroUnico.set(idLimpio, item);
+      if (errProd) throw errProd;
+
+      // Paginación iterativa para traer los 4,757+ registros sin que Supabase los corte en 1,000
+      let todosLosMovimientos: any[] = [];
+      let desde = 0;
+      let hasta = 999;
+      let tieneMas = true;
+
+      while (tieneMas) {
+        const { data: chunk, error: errMov } = await supabase
+          .from("movements")
+          .select("*")
+          .range(desde, hasta);
+
+        if (errMov) throw errMov;
+
+        if (chunk && chunk.length > 0) {
+          todosLosMovimientos = [...todosLosMovimientos, ...chunk];
+          if (chunk.length < 1000) {
+            tieneMas = false;
+          } else {
+            desde += 1000;
+            hasta += 1000;
+          }
+        } else {
+          tieneMas = false;
         }
+      }
+
+      // --- FILTRADO DINÁMICO SEGÚN LA VISTA SELECCIONADA ---
+      const productosFiltrados = (dbProducts || []).filter((p: any) => {
+        return mostrarOcultos ? p.active === false : p.active !== false;
       });
 
-      // 3. INYECTAR ARRIBOS FILTRADOS
-      const datosConsolidados = Array.from(maestroUnico.values()).map(m => {
-        const codM = String(m.codigo).trim();
+      // Consolidación de información cruzando por el UUID de la tabla products
+      const datosConsolidados = productosFiltrados.map((p: any) => {
+        const productUUID = p.id; 
+
+        const historialDelSku = todosLosMovimientos.filter((m: any) => m.product_id === productUUID);
+        const arribosDelSku = dbArrivals
+          ? dbArrivals.filter((a: any) => a.product_id === productUUID && a.status === "PENDIENTE")
+          : [];
+
         return {
-          ...m,
-          todosLosArribos: arribosData ? arribosData.filter(a => String(a.codigo).trim() === codM) : []
+          id: productUUID,
+          code: p.code ? String(p.code).trim() : "SIN CÓDIGO",
+          description: p.description ? String(p.description).trim() : "SIN DESCRIPCIÓN",
+          family: p.family ? String(p.family).trim() : "GENERAL",
+          lead_time: parseInt(p.lead_time) || 0,
+          stockFisico: Number(p.stock || 0),
+          movimientos: historialDelSku,
+          arribos: arribosDelSku
         };
       });
-      
-      setMaestro(datosConsolidados);
-      
+
+      setProductos(datosConsolidados);
     } catch (err) {
-      console.error("Error en fetchData:", err);
+      console.error("Error sincronizando base de datos Ares:", err);
     } finally {
       setLoading(false);
     }
   }
 
-  // --- LÓGICA DE ACTUALIZACIÓN EN BASE DE DATOS ---
-  const toggleVisibilidadDB = async (codigo: string, estadoActual: boolean) => {
+  // --- ACCIÓN DE OCULTACIÓN (BORRADO LÓGICO) ---
+  const deshabilitarYArchivarSku = async (productId: string, skuCode: string) => {
+    const confirmar = window.confirm(`¿Confirmas que deseas ocultar el SKU [${skuCode}]? Se archivará en la base de datos y se omitirá de todos los cálculos analíticos activos.`);
+    if (!confirmar) return;
+
     try {
-      const nuevoEstado = !estadoActual;
-      const { error } = await supabase.from('imp_maestro').update({ activo: nuevoEstado }).eq('codigo', codigo);
+      const { error } = await supabase
+        .from("products")
+        .update({ active: false })
+        .eq("id", productId);
 
       if (error) throw error;
 
-      setMaestro(prev => prev.map(item => item.codigo === codigo ? { ...item, activo: nuevoEstado } : item));
-      if (itemSeleccionado?.codigo === codigo) {
-        setItemSeleccionado((prev: any) => ({...prev, activo: nuevoEstado}));
-      }
+      // Remoción local suave para no forzar recargas bruscas
+      setProductos((prev) => prev.filter((p) => p.id !== productId));
     } catch (err) {
-      console.error("Error ejecutando toggle:", err);
+      console.error("Error al archivar SKU en Ares:", err);
+      alert("Error crítico: No se pudo actualizar el estado de visibilidad en Supabase.");
     }
   };
 
-  // --- LÓGICA DE PROYECCIÓN ---
-  const mesesProyeccionHeaders = useMemo(() => {
-    const nombres = ["MAY", "JUN", "JUL", "AGO", "SEP", "OCT"];
-    return nombres.map((nombre, i) => {
-      const d = new Date(AÑO_ACTUAL, MES_ACTUAL_INDEX + i, 1);
-      return { nombre, año: d.getFullYear(), id: `${d.getFullYear()}-${d.getMonth()}`, index: i, mesNum: d.getMonth() };
-    });
+  // --- ACCIÓN DE RESTAURACIÓN (REVERTIR BORRADO LÓGICO) ---
+  const reestablecerSku = async (productId: string, skuCode: string) => {
+    const confirmar = window.confirm(`¿Deseas restaurar el SKU [${skuCode}]? Volverá al catálogo activo principal y reanudará sus cálculos de proyecciones.`);
+    if (!confirmar) return;
+
+    try {
+      const { error } = await supabase
+        .from("products")
+        .update({ active: true })
+        .eq("id", productId);
+
+      if (error) throw error;
+
+      // Quitar de la vista de ocultos localmente de inmediato
+      setProductos((prev) => prev.filter((p) => p.id !== productId));
+    } catch (err) {
+      console.error("Error al restaurar SKU en Ares:", err);
+      alert("Error crítico: No se pudo reestablecer el producto en Supabase.");
+    }
+  };
+
+  const mesesHeaders = useMemo(() => {
+    const nombresMeses = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"];
+    const listaHeaders = [];
+    for (let i = MES_INICIO_PROYECCION; i <= 11; i++) {
+      listaHeaders.push({ id: `2026-${i}`, nombre: nombresMeses[i], mesNum: i, año: AÑO_ACTUAL });
+    }
+    return listaHeaders;
   }, []);
 
+  // --- PROCESAMIENTO ANALÍTICO POR MES ---
   const dataProcesada = useMemo(() => {
-    return maestro.map(item => {
-      const promedio = Number(item.promedio_mensual) || 0; 
-      const stockFisico = Number(item.stock) || 0;
-      const leadTimeDias = parseInt(item.lead_time) || 0;
+    return productos.map(item => {
+      const stockFisico = item.stockFisico;
+      const leadTimeDias = item.lead_time;
       const leadTimeMeses = leadTimeDias / 30;
 
-      // SUMA TOTAL DE ARRIBOS
-      const listaArribos = item.todosLosArribos || [];
-      const arriboCantTotal = listaArribos.reduce((acc: number, curr: any) => acc + (Number(curr.arribo) || 0), 0);
-
-      const stockTotalParaCobertura = stockFisico + arriboCantTotal;
-      const coberturaMeses = promedio > 0 ? stockTotalParaCobertura / promedio : 0;
-      const pedidoSugerido = promedio > 0 ? (promedio * leadTimeMeses) + (promedio * 0.50) : 0;
-      
-      const dQuiebre = new Date(AÑO_ACTUAL, MES_ACTUAL_INDEX, 1);
-      dQuiebre.setDate(dQuiebre.getDate() + (coberturaMeses * 30));
-      
-      const dOC = new Date(dQuiebre);
-      dOC.setDate(dOC.getDate() - leadTimeDias - 45);
-
-      let estadoCalculado = "STOCK OK";
-      const hoy = new Date(AÑO_ACTUAL, MES_ACTUAL_INDEX, 1);
-      if (promedio === 0 && stockFisico === 0) estadoCalculado = "SIN MOVIMIENTO";
-      else if (promedio > 0 && dOC <= hoy) estadoCalculado = "COMPRAR YA";
-      else if (promedio > 0 && coberturaMeses <= (leadTimeMeses + 1.5)) estadoCalculado = "POR REVISAR";
-
-      const puntosGrafico: any[] = [];
-      ["ene", "feb", "mar", "abr"].forEach((m, idx) => {
-        puntosGrafico.push({ 
-          mes: `${MESES_ABR_GLOBAL[idx]} 26`, 
-          stock: null, 
-          salidaReal: Number(item[`s26_${m}`]) || 0,
-          tipo: 'HISTORICO'
-        });
+      // 1. Filtrar los movimientos que califiquen como salidas comerciales legítimas
+      const salidasValidas = item.movimientos.filter((m: any) => {
+        const tipoDoc = String(m.type || "").trim().toUpperCase();
+        const codTrans = String(m.transaction_code || "").trim().toUpperCase();
+        return DOCUMENTOS_SALIDA.includes(tipoDoc) || DOCUMENTOS_SALIDA.includes(codTrans);
       });
 
-      // PROYECCIÓN CON MÚLTIPLES ARRIBOS
-      let stockAcumulado = stockFisico;
-      mesesProyeccionHeaders.forEach((m) => {
-        const arribosEsteMes = listaArribos.filter((a: any) => {
-          const f = a.fecha_arribo ? new Date(a.fecha_arribo) : null;
-          return f && f.getMonth() === m.mesNum && f.getFullYear() === m.año;
+      // 2. Sumatoria total de unidades despachadas (Valor absoluto)
+      const unidadesTotalesSalida = salidasValidas.reduce((sum: number, curr: any) => sum + Math.abs(Number(curr.quantity || 0)), 0);
+
+      // 3. DETERMINACIÓN DEL DENOMINADOR EN MESES (Mapeo único de periodos Año-Mes con salidas)
+      const mesesConActividad = new Set(salidasValidas.map((m: any) => {
+        const fechaObj = m.date ? new Date(m.date) : new Date(m.created_at);
+        return `${fechaObj.getFullYear()}-${fechaObj.getMonth()}`; // Formato agrupador '2026-1'
+      }));
+
+      // Cantidad de meses únicos identificados desde el inicio del archivo para este SKU
+      const totalMesesPeriodo = mesesConActividad.size > 0 ? mesesConActividad.size : 1;
+
+      // PROMEDIO MENSUAL CORRECTO: Total unidades / Total meses transcurridos
+      const promedioMensualSalidas = unidadesTotalesSalida / totalMesesPeriodo;
+
+      const totalArribos = item.arribos.reduce((sum: number, a: any) => sum + Number(a.quantity || 0), 0);
+      const inventarioVirtual = stockFisico + totalArribos;
+      
+      const coberturaMeses = promedioMensualSalidas > 0 ? inventarioVirtual / promedioMensualSalidas : 0;
+      const sugeridoCompra = promedioMensualSalidas > 0 ? (promedioMensualSalidas * leadTimeMeses) * 1.15 : 0;
+
+      let stockSimulado = stockFisico;
+      let mesQuiebreCalculado = "ESTABLE";
+      let yaQuebro = false;
+      let fechaQuiebre = new Date(AÑO_ACTUAL, 11, 31);
+
+      const proyeccionesPorMes = mesesHeaders.map((m) => {
+        const arribosEsteMes = item.arribos.filter((a: any) => {
+          const fechaEta = a.eta_date ? new Date(a.eta_date) : null;
+          return fechaEta && fechaEta.getMonth() === m.mesNum && fechaEta.getFullYear() === m.año;
         });
 
-        const sumaArribosMes = arribosEsteMes.reduce((acc: number, curr: any) => acc + (Number(curr.arribo) || 0), 0);
+        const entradasOC = arribosEsteMes.reduce((sum: number, curr: any) => sum + Number(curr.quantity || 0), 0);
         
-        stockAcumulado = stockAcumulado - promedio + sumaArribosMes;
-        
-        puntosGrafico.push({ 
-            mes: `${m.nombre} 26`, 
-            salidaIA: promedio, 
-            stock: Math.max(0, stockAcumulado), 
-            tipo: 'PROYECCION',
-            arriboCant: sumaArribosMes,
-            llegaStock: sumaArribosMes > 0
-        });
+        // Descontamos mensualmente el consumo promedio calculado
+        stockSimulado = stockSimulado + entradasOC - promedioMensualSalidas;
+
+        if (stockSimulado <= 0 && !yaQuebro) {
+          mesQuiebreCalculado = `${m.nombre} 26`;
+          fechaQuiebre = new Date(AÑO_ACTUAL, m.mesNum, 1);
+          yaQuebro = true;
+        }
+
+        return {
+          stockFinal: Math.max(0, stockSimulado),
+          demandaPredicha: promedioMensualSalidas,
+          arriboInyectado: entradasOC
+        };
       });
 
-      const isActivo = item.activo !== false; 
+      const fechaLimiteOC = new Date(fechaQuiebre);
+      fechaLimiteOC.setDate(fechaLimiteOC.getDate() - leadTimeDias -30); // 45 días antes del quiebre para margen de seguridad
 
-      return { 
-        ...item, 
-        activo: isActivo,
-        stockFisico, 
-        arriboCant: arriboCantTotal, 
-        stockTotal: stockFisico + arriboCantTotal, 
-        promedio, leadTimeDias, pedidoSugerido, coberturaMeses, 
-        estado: estadoCalculado, puntosGrafico,
-        fechaQuiebre: dQuiebre.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' }),
-        fechaLanzarOC: dOC.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' }),
-        mesQuiebre: `${MESES_ABR_GLOBAL[dQuiebre.getMonth()]} 26`,
-        mesOC: `${MESES_ABR_GLOBAL[dOC.getMonth() >= 0 ? dOC.getMonth() : 0]} 26`
+      let estadoAbastecimiento = "STOCK OK";
+      const hoy = new Date(AÑO_ACTUAL, MES_INICIO_PROYECCION, 1);
+
+      if (promedioMensualSalidas === 0 && stockFisico === 0) estadoAbastecimiento = "SIN MOVIMIENTO";
+      else if (promedioMensualSalidas > 0 && fechaLimiteOC <= hoy) estadoAbastecimiento = "COMPRAR YA";
+      else if (promedioMensualSalidas > 0 && coberturaMeses <= (leadTimeMeses + 1.0)) estadoAbastecimiento = "POR REVISAR";
+
+      return {
+        ...item,
+        enTránsito: totalArribos,
+        consumoIA: promedioMensualSalidas, 
+        mesesActivos: totalMesesPeriodo,
+        coberturaMeses,
+        mesQuiebre: yaQuebro ? mesQuiebreCalculado : "OK",
+        fechaLimiteOCStr: yaQuebro ? fechaLimiteOC.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' }) : "---",
+        pedidoSugerido: sugeridoCompra,
+        proyeccionesPorMes,
+        estado: estadoAbastecimiento
       };
     }).filter(i => {
-      const cumpleBusqueda = i.codigo.toLowerCase().includes(search.toLowerCase()) || (i.descripcion || "").toLowerCase().includes(search.toLowerCase());
+      const cumpleBusqueda = i.code.toLowerCase().includes(search.toLowerCase()) || i.description.toLowerCase().includes(search.toLowerCase());
       const cumpleEstado = filtroEstado === "TODOS" || i.estado === filtroEstado;
-      const cumpleFamilia = filtroFamilia === "TODOS" || i.familia === filtroFamilia;
-      const cumpleVisibilidad = verSoloInactivos ? !i.activo : i.activo;
-      return cumpleBusqueda && cumpleEstado && cumpleFamilia && cumpleVisibilidad;
+      const cumpleFamilia = filtroFamilia === "TODOS" || i.family === filtroFamilia;
+      return cumpleBusqueda && cumpleEstado && cumpleFamilia;
     });
-  }, [maestro, search, filtroEstado, filtroFamilia, mesesProyeccionHeaders, verSoloInactivos]);
+  }, [productos, search, filtroEstado, filtroFamilia, mesesHeaders]);
 
-  const familiasUnicas = useMemo(() => Array.from(new Set(maestro.map(m => m.familia).filter(Boolean))), [maestro]);
-  const inactivosCount = maestro.filter(m => m.activo === false).length;
-
-  const CustomTooltip = ({ active, payload }: any) => {
-    if (active && payload && payload.length) {
-      const data = payload[0].payload;
-      return (
-        <div className="bg-white p-4 shadow-2xl border border-slate-200 rounded-lg z-50 relative">
-          <p className="text-xs font-black text-slate-800 mb-2 border-b pb-1">{data.mes}</p>
-          {data.stock !== null && <p className="text-blue-600 font-bold">Stock: {Math.round(data.stock).toLocaleString()}</p>}
-          {data.salidaReal > 0 && <p className="text-slate-500 font-bold">Salida Real: {data.salidaReal}</p>}
-          {data.salidaIA > 0 && <p className="text-purple-500 font-bold text-xs italic">Predicción: {Math.round(data.salidaIA)}</p>}
-          {data.llegaStock && (
-            <div className="mt-2 p-2 bg-blue-600 text-white rounded text-[10px] font-black animate-pulse">
-              🚢 ARRIBO(S): +{(data.arriboCant || 0).toLocaleString()}
-            </div>
-          )}
-        </div>
-      );
-    }
-    return null;
-  };
+  const familiasUnicas = useMemo(() => {
+    return Array.from(new Set(productos.map(p => p.family).filter(Boolean)));
+  }, [productos]);
 
   if (loading) return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-      <div className="flex flex-col items-center gap-4">
-        <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-        <p className="font-black text-slate-600 animate-pulse">CARGANDO DATOS MAESTROS...</p>
+    <div className="min-h-[80vh] flex items-center justify-center bg-[#f8fafc]">
+      <div className="text-center space-y-2">
+        <div className="w-8 h-8 border-2 border-slate-800 border-t-transparent rounded-full animate-spin mx-auto"></div>
+        <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Calculando promedios en base a meses con salidas del archivo...</p>
       </div>
     </div>
   );
 
   return (
-    <div className="bg-[#f4f7f9] min-h-screen font-sans text-[#1d2d3d] pb-10">
-      <header className="bg-[#1e293b] text-white p-4 shadow-lg flex flex-wrap justify-between items-center sticky top-0 z-50 gap-4">
-        <div className="flex items-center gap-4">
-          <div className="bg-blue-600 p-2 rounded shadow-lg"><Package size={24} /></div>
-          <div>
-            <h1 className="text-lg md:text-xl font-black tracking-tighter">SAP SUPPLY CHAIN PLANNING</h1>
-            <p className="text-[10px] text-blue-400 font-bold uppercase tracking-widest">Panel de Control de Importaciones</p>
-          </div>
+    <div className="bg-[#f8fafc] min-h-screen text-slate-800 antialiased font-sans">
+      
+      {/* HEADER */}
+      <header className="bg-white border-b border-slate-200 p-5">
+        <div className="flex items-center gap-2 text-slate-900 font-bold text-base tracking-tight">
+          <TrendingUp size={18} className="text-purple-600" />
+          <span>Módulo de Planeamiento Predictivo de Compra de Materia Prima (ARES)</span>
         </div>
-        
-        <div className="flex gap-3 w-full md:w-auto">
-          <button 
-            onClick={() => setVerSoloInactivos(!verSoloInactivos)} 
-            className={`flex-1 md:flex-none flex justify-center items-center gap-2 px-4 py-2 rounded-lg text-xs font-black border transition-all ${
-              verSoloInactivos ? 'bg-orange-600 border-orange-400 text-white' : 'bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-300'
-            }`}
-          >
-            {verSoloInactivos ? <CheckCircle2 size={16}/> : <EyeOff size={16}/>}
-            {verSoloInactivos ? "VOLVER A ACTIVOS" : `INACTIVOS (${inactivosCount})`}
-          </button>
-        </div>
+        <p className="text-[11px] text-slate-400 font-medium mt-0.5">Simulación de los Movimientos y Proyecciones de Demanda</p>
       </header>
 
-      <main className="w-full max-w-[1850px] mx-auto p-3 md:p-6 space-y-6">
-        
-        {itemSeleccionado && (
-          <div className="bg-white rounded-xl border-t-4 border-t-blue-600 shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-300">
-            <div className="bg-slate-50 border-b p-5 flex flex-wrap justify-between items-center gap-4">
-              <div className="flex flex-wrap items-center gap-4 md:gap-8 w-full md:w-auto">
-                <div>
-                  <h2 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tight">{itemSeleccionado.codigo}</h2>
-                  <p className="text-xs md:text-sm font-bold text-slate-500 uppercase tracking-wide break-words max-w-[300px] md:max-w-none">{itemSeleccionado.descripcion}</p>
-                </div>
-                <div className="hidden md:block h-10 w-px bg-slate-300" />
-                <button 
-                  onClick={() => setVerCapasTecnicas(!verCapasTecnicas)} 
-                  className={`px-4 md:px-5 py-2.5 rounded-full font-black text-xs transition-all flex items-center gap-2 ${
-                    verCapasTecnicas ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-200 text-slate-500'
-                  }`}
-                >
-                  <BarChart3 size={16} /> REPORTE TÉCNICO {verCapasTecnicas ? 'ACTIVO' : 'MINIMAL'}
-                </button>
-              </div>
-              <button onClick={() => setItemSeleccionado(null)} className="p-2 hover:bg-red-50 text-red-500 rounded-full transition-colors"><X size={28}/></button>
-            </div>
-            
-            <div className="p-4 md:p-8 grid grid-cols-1 lg:grid-cols-12 gap-6 md:gap-8">
-              <div className="lg:col-span-9 h-[450px] md:h-[550px] bg-slate-50 rounded-xl p-2 md:p-4 border border-slate-100 relative overflow-hidden">
-                <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={itemSeleccionado.puntosGrafico} margin={{top: 40, right: 10, left: 0, bottom: 20}}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                    <XAxis dataKey="mes" tick={{fontSize: 10, fontWeight: 800}} />
-                    <YAxis tick={{fontSize: 10}} width={45} />
-                    <Tooltip content={<CustomTooltip />} />
-                    <Legend verticalAlign="top" align="right" wrapperStyle={{paddingBottom: '20px', fontSize: '12px'}} />
-                    <ReferenceArea x1="MAY 26" x2="OCT 26" fill="#eff6ff" fillOpacity={0.5} />
-                    
-                    {itemSeleccionado.puntosGrafico.map((entry: any, index: number) => (
-                        entry.llegaStock ? (
-                          <ReferenceLine key={`ref-${index}`} x={entry.mes} stroke="#2563eb" strokeDasharray="4 4" strokeWidth={2}>
-                            <Label value={`🚢 +${entry.arriboCant.toLocaleString()}`} position="top" fill="#2563eb" fontSize={10} fontWeight="900" />
-                          </ReferenceLine>
-                        ) : null
-                    ))}
-
-                    <Bar dataKey="salidaReal" name="Salidas Reales" fill="#94a3b8" barSize={20} radius={[4, 4, 0, 0]} />
-                    <Area type="monotone" dataKey="stock" name="Stock Proyectado" stroke="#2563eb" fill="#3b82f6" fillOpacity={0.1} strokeWidth={4} />
-                    
-                    {verCapasTecnicas && (
-                      <>
-                        <ReferenceLine x={itemSeleccionado.mesQuiebre} stroke="#ef4444" strokeWidth={3}>
-                          <Label value={`QUIEBRE: ${itemSeleccionado.fechaQuiebre}`} position="insideTopLeft" fill="#ef4444" fontSize={11} fontWeight="900" />
-                        </ReferenceLine>
-                        <ReferenceLine x={itemSeleccionado.mesOC} stroke="#f59e0b" strokeWidth={3} strokeDasharray="5 5">
-                          <Label value={`SOLICITAR OC: ${itemSeleccionado.fechaLanzarOC}`} position="insideTopRight" fill="#f59e0b" fontSize={11} fontWeight="900" />
-                        </ReferenceLine>
-                      </>
-                    )}
-                    <Scatter dataKey="salidaIA" name="Predicción Demanda" fill="#1e293b" />
-                  </ComposedChart>
-                </ResponsiveContainer>
-              </div>
-
-              <div className="lg:col-span-3 space-y-4">
-                <div className="p-4 md:p-5 bg-blue-50 border border-blue-200 rounded-xl shadow-sm">
-                  <div className="text-blue-800 font-black uppercase text-[10px] mb-1">Inventario Disponible</div>
-                  <p className="text-2xl md:text-3xl font-black text-blue-900">{itemSeleccionado.stockTotal.toLocaleString()} <span className="text-xs md:text-sm font-bold opacity-60">uds</span></p>
-                  <div className="mt-3 pt-3 border-t border-blue-200 flex justify-between">
-                    <span className="text-[10px] font-black text-blue-600 uppercase">Cobertura Actual</span>
-                    <span className="text-sm font-black text-blue-800">{itemSeleccionado.coberturaMeses.toFixed(1)} Meses</span>
-                  </div>
-                </div>
-                <div className="p-4 md:p-5 bg-orange-50 border border-orange-200 rounded-xl shadow-sm">
-                  <div className="flex items-center gap-3 mb-2 text-xs font-black uppercase text-orange-700"><Clock size={18}/> Colocar OC Máximo</div>
-                  <p className="text-xl md:text-2xl font-black text-orange-800">{itemSeleccionado.fechaLanzarOC}</p>
-                </div>
-                <div className="p-4 md:p-5 bg-red-50 border border-red-200 rounded-xl text-red-900 shadow-sm">
-                  <div className="flex items-center gap-3 mb-2 text-xs font-black uppercase"><AlertTriangle size={18}/> Fecha de Quiebre</div>
-                  <p className="text-xl md:text-2xl font-black">{itemSeleccionado.fechaQuiebre}</p>
-                </div>
-                <div className="p-5 md:p-6 bg-[#1e293b] text-white rounded-xl shadow-xl border-b-4 border-b-blue-500 relative overflow-hidden">
-                  <div className="relative z-10">
-                    <div className="flex items-center gap-3 mb-2 text-blue-400 text-xs font-black uppercase">
-                      <ArrowDownToLine size={20}/> Pedido Sugerido
-                    </div>
-                    <p className="text-3xl md:text-4xl font-black tracking-tighter">{Math.round(itemSeleccionado.pedidoSugerido).toLocaleString()}</p>
-                  </div>
-                  <Package className="absolute right-[-10px] bottom-[-10px] text-slate-700 opacity-20" size={70} />
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* FILTROS */}
-        <div className="bg-white p-4 md:p-6 rounded-xl shadow-sm border border-slate-200 flex flex-wrap gap-4 md:gap-6 items-end">
-          <div className="flex-1 min-w-[280px]">
-            <label className="text-[10px] md:text-[11px] font-black text-slate-400 uppercase mb-2 block">Buscador de Códigos</label>
+      {/* FILTROS */}
+      <main className="p-5 space-y-4 max-w-[1920px] mx-auto">
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap gap-4 items-end">
+          <div className="flex-1 min-w-[320px]">
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Buscador por Código</label>
             <div className="relative">
-              <Search className="absolute left-4 top-3.5 text-slate-400" size={18} />
-              <input type="text" placeholder="Escribe código o nombre del producto..." className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg font-bold text-xs md:text-sm outline-none focus:ring-2 focus:ring-blue-500 transition-all" onChange={(e) => setSearch(e.target.value)} />
+              <Search className="absolute left-3 top-2.5 text-slate-400" size={14} />
+              <input 
+                type="text" 
+                placeholder="Buscar SKU..." 
+                className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-medium outline-none focus:bg-white"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
             </div>
           </div>
-          <div className="w-full md:w-56 lg:w-64">
-            <label className="text-[10px] md:text-[11px] font-black text-slate-400 uppercase mb-2 block">Categoría / Familia</label>
-            <select className="w-full bg-slate-50 border border-slate-200 p-3 rounded-lg text-xs font-black cursor-pointer focus:ring-2 focus:ring-blue-500 truncate" onChange={(e) => setFiltroFamilia(e.target.value)}>
-              <option value="TODOS">TODAS LAS FAMILIAS</option>
-              {familiasUnicas.map(f => <option key={f} value={f}>{f}</option>)}
+
+          {/* SELECTOR PROFESIONAL DE VISTA (ACTIVOS O OCULTOS) */}
+          <div className="w-52">
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Vista de Catálogo</label>
+            <select 
+              className={`w-full border p-2 rounded-lg text-[11px] font-bold cursor-pointer outline-none ${mostrarOcultos ? "bg-amber-50 border-amber-300 text-amber-800" : "bg-slate-50 border-slate-200 text-slate-800"}`}
+              value={mostrarOcultos ? "OCULTOS" : "ACTIVOS"}
+              onChange={(e) => setMostrarOcultos(e.target.value === "OCULTOS")}
+            >
+              <option value="ACTIVOS">🟢 SKU ACTIVOS</option>
+              <option value="OCULTOS">⚫ SKUS ARCHIVADOS</option>
             </select>
           </div>
-          <div className="w-full md:w-56 lg:w-64">
-            <label className="text-[10px] md:text-[11px] font-black text-slate-400 uppercase mb-2 block">Prioridad de Abastecimiento</label>
-            <select className="w-full bg-slate-50 border border-slate-200 p-3 rounded-lg text-xs font-black cursor-pointer focus:ring-2 focus:ring-blue-500" onChange={(e) => setFiltroEstado(e.target.value)}>
-              <option value="TODOS">TODOS LOS ESTADOS</option>
+
+          <div className="w-52">
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Familia</label>
+            <select 
+              className="w-full bg-slate-50 border border-slate-200 p-2 rounded-lg text-[11px] font-bold cursor-pointer"
+              value={filtroFamilia}
+              onChange={(e) => setFiltroFamilia(e.target.value)}
+            >
+              <option value="TODOS">TODAS</option>
+              {familiasUnicas.map(f => <option key={f} value={f}>{f.toUpperCase()}</option>)}
+            </select>
+          </div>
+
+          <div className="w-52">
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Alertas</label>
+            <select 
+              className="w-full bg-slate-50 border border-slate-200 p-2 rounded-lg text-[11px] font-bold cursor-pointer"
+              value={filtroEstado}
+              onChange={(e) => setFiltroEstado(e.target.value)}
+            >
+              <option value="TODOS">TODOS</option>
               <option value="COMPRAR YA">🚨 COMPRAR YA</option>
               <option value="POR REVISAR">⚠️ POR REVISAR</option>
               <option value="STOCK OK">✅ STOCK OK</option>
@@ -356,69 +325,123 @@ export default function ModuloAbastecimientoSAP() {
         </div>
 
         {/* TABLA PRINCIPAL */}
-        <div className="bg-white rounded-xl shadow-2xl border border-slate-300 overflow-hidden">
-          <div className="overflow-x-auto w-full max-h-[600px] md:max-h-[700px] custom-scrollbar">
-            <table className="w-full text-left text-[10px] md:text-[11px] border-collapse min-w-[1000px]">
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto w-full max-h-[700px] custom-scrollbar">
+            <table className="w-full text-left border-collapse min-w-[1700px]">
               <thead>
-                <tr className="bg-[#1e293b] text-white font-bold uppercase sticky top-0 z-20 whitespace-nowrap">
-                  <th className="p-3 md:p-4 text-center w-12 md:w-14">Acción</th>
-                  <th className="p-3 md:p-4 text-center w-12 md:w-14 border-x border-slate-700">Estado</th>
-                  <th className="p-3 md:p-4">Código</th>
-                  <th className="p-3 md:p-4 min-w-[200px]">Descripción</th>
-                  <th className="p-3 md:p-4 text-center bg-[#2d3748]">Lead Time</th>
-                  <th className="p-3 md:p-4 text-center bg-[#2d3748]">Stock Actual</th>
-                  <th className="p-3 md:p-4 text-center">Arribos</th>
-                  <th className="p-3 md:p-4 text-center">Promedio</th>
-                  <th className="p-3 md:p-4 text-center bg-blue-700 text-white font-black">COB (M)</th>
-                  <th className="p-3 md:p-4 text-center">F. Quiebre</th>
-                  <th className="p-3 md:p-4 text-center bg-blue-900 text-blue-200">Sugerido</th>
-                  {mesesProyeccionHeaders.map(m => (
-                    <th key={m.id} className="p-3 md:p-4 text-center bg-slate-800 opacity-60 font-medium">{m.nombre}</th>
+                <tr className="bg-[#0f172a] text-slate-200 font-semibold text-[11px] tracking-wider uppercase sticky top-0 z-20 whitespace-nowrap">
+                  <th className="p-3 w-32 border-b border-slate-700">Código</th>
+                  <th className="p-3 min-w-[240px] max-w-[300px] border-b border-slate-700">Descripción</th>
+                  <th className="p-3 text-center w-24 border-b border-slate-700">L. Time</th>
+                  <th className="p-3 text-right w-24 border-b border-slate-700">Stock</th>
+                  <th className="p-3 text-right w-28 border-b border-slate-700">Arribos</th>
+                  
+                  {/* COLUMNA DEL PROMEDIO MENSUAL REPARADO */}
+                  <th className="p-3 text-right w-36 border-b border-slate-700 bg-purple-950 text-purple-300 font-black">
+                    (Prom/Mes)
+                  </th>
+                  
+                  <th className="p-3 text-center w-24 border-b border-slate-700 bg-slate-900 text-blue-300">Cobertura</th>
+                  <th className="p-3 text-center w-24 border-b border-slate-700">Quiebre</th>
+                  <th className="p-3 text-center w-28 border-b border-slate-700">Fecha OC</th>
+                  <th className="p-3 text-right w-28 border-b border-slate-700 bg-slate-900 text-emerald-300 font-bold">Sugerido OC</th>
+                  
+                  {mesesHeaders.map(m => (
+                    <th key={m.id} className="p-3 text-right w-28 font-medium border-l border-slate-800 bg-slate-900/40 text-slate-300">
+                      {m.nombre} 26
+                    </th>
                   ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-100 text-[11px]">
                 {dataProcesada.map(item => (
-                  <tr 
-                    key={String(item.codigo)} // Conversión explícita para evitar errores de tipo
-                    className={`hover:bg-blue-50/50 transition-colors ${itemSeleccionado?.codigo === item.codigo ? 'bg-blue-50' : ''} ${!item.activo ? 'opacity-50 grayscale' : ''}`}
-                  >
-                    <td className="p-2 text-center">
-                      <button onClick={() => setItemSeleccionado(item)} className="p-2 md:p-2.5 bg-white border border-slate-200 hover:bg-blue-600 hover:text-white rounded-lg transition-all shadow-sm">
-                        <Eye size={14} />
-                      </button>
+                  <tr key={item.id} className={`transition-colors ${mostrarOcultos ? "hover:bg-amber-50/40 bg-amber-50/10" : "hover:bg-slate-50/80"}`}>
+                    <td className="p-3 font-bold text-slate-900 whitespace-nowrap">{item.code}</td>
+                    <td className="p-3 font-medium text-slate-600 max-w-[300px] flex items-center justify-between gap-2" title={item.description}>
+                      <span className="truncate">{item.description.toUpperCase()}</span>
+                      
+                      {/* ACCIÓN CONTEXTUAL: SI ESTÁ OCULTO MUESTRA 'EYE' PARA RESTAURAR, SINO MUESTRA 'EYEOFF' PARA ARCHIVAR */}
+                      {mostrarOcultos ? (
+                        <button
+                          onClick={() => reestablecerSku(item.id, item.code)}
+                          className="text-slate-400 hover:text-emerald-600 transition-colors flex-shrink-0 ml-1"
+                          title="Restaurar material y devolver al catálogo activo"
+                        >
+                          <Eye size={13} />
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => deshabilitarYArchivarSku(item.id, item.code)}
+                          className="text-slate-300 hover:text-rose-600 transition-colors flex-shrink-0 ml-1"
+                          title="Archivar material obsoleto del maestro"
+                        >
+                          <EyeOff size={13} />
+                        </button>
+                      )}
                     </td>
-                    <td className="p-2 text-center">
-                      <button onClick={() => toggleVisibilidadDB(item.codigo, item.activo)} className={`p-2 rounded-lg transition-all shadow-sm border ${!item.activo ? 'text-red-600 bg-red-100 border-red-200' : 'text-green-600 bg-green-50 border-green-200'}`}>
-                        {!item.activo ? <Power size={14}/> : <CheckCircle2 size={14}/>}
-                      </button>
+                    <td className="p-3 text-center font-medium text-slate-500">{item.lead_time}</td>
+                    <td className="p-3 text-right font-semibold text-slate-900">{item.stockFisico.toLocaleString()}</td>
+                    
+                    <td className="p-3 text-right font-semibold text-blue-600">
+                      {item.enTránsito > 0 ? (
+                        <span className="bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100 text-[10px] font-medium inline-flex items-center gap-1">
+                          <Ship size={10} /> {item.enTránsito.toLocaleString()}
+                        </span>
+                      ) : <span className="text-slate-300">-</span>}
                     </td>
-                    <td className="p-3 md:p-4 font-black text-slate-800 whitespace-nowrap">{item.codigo}</td>
-                    <td className="p-3 md:p-4 font-bold text-slate-900 uppercase max-w-[200px] truncate">{item.descripcion}</td>
-                    <td className="p-3 md:p-4 text-center font-bold text-slate-900">{item.leadTimeDias}</td>
-                    <td className="p-3 md:p-4 text-center font-black">{item.stockFisico.toLocaleString()}</td>
-                    {/* COLUMNA ARRIBOS SUMADOS */}
-                    <td className="p-3 md:p-4 text-center font-black text-blue-600 bg-blue-50/30">
-                      {item.arriboCant > 0 ? (
-                        <div className="flex flex-col items-center">
-                          <span className="flex items-center gap-1"><Ship size={10}/> {item.arriboCant.toLocaleString()}</span>
+
+                    {/* MUESTRA DEL CONSUMO PROMEDIO MENSUAL AJUSTADO CON UN TOOLTIP EXPLICATIVO */}
+                    <td className="p-3 text-right bg-purple-50/60" title={`Calculado en base a ${item.mesesActivos} meses con salidas`}>
+                      <div className="flex flex-col items-end">
+                        <span className="font-black text-purple-700 text-xs">
+                          {Math.round(item.consumoIA).toLocaleString()}
+                        </span>
+                        <span className="text-[9px] font-medium flex items-center gap-0.5 mt-0.5">
+                          <Calendar size={8} /> en {item.mesesActivos} {item.mesesActivos === 1 ? 'mes' : 'meses'}
+                        </span>
+                      </div>
+                    </td>
+                    
+                    <td className={`p-3 text-center font-bold bg-blue-50/5 ${item.coberturaMeses < 1.0 ? "text-rose-600 font-black" : "text-slate-700"}`}>
+                      {item.coberturaMeses.toFixed(1)} M
+                    </td>
+                    <td className={`p-3 text-center font-bold ${item.mesQuiebre !== "OK" ? "text-rose-600 bg-rose-50/30" : "text-emerald-600"}`}>
+                      {item.mesQuiebre}
+                    </td>
+                    <td className="p-3 text-center font-medium">
+                      {item.estado === "COMPRAR YA" ? (
+                        <span className="bg-rose-50 text-rose-700 border border-rose-200 px-2 py-0.5 rounded font-bold text-[10px]">
+                          🚨 {item.fechaLimiteOCStr}
+                        </span>
+                      ) : <span className="text-slate-400">{item.fechaLimiteOCStr}</span>}
+                    </td>
+                    <td className="p-3 text-right font-bold bg-slate-50/50 text-slate-900">
+                      {item.pedidoSugerido > 0 ? (
+                        <span className="inline-flex items-center gap-1">
+                          <ArrowDownToLine size={10} className="text-emerald-600" />
+                          {Math.round(item.pedidoSugerido).toLocaleString()}
+                        </span>
+                      ) : "0"}
+                    </td>
+
+                    {/* Líneas Mensuales Proyectadas */}
+                    {item.proyeccionesPorMes.map((p: any, idx: number) => (
+                      <td key={idx} className="p-3 text-right border-l border-slate-100 whitespace-nowrap bg-slate-50/20">
+                        <div className="flex flex-col items-end">
+                          <span className={`font-semibold ${p.stockFinal <= 0 ? "text-rose-600 font-bold bg-rose-50 px-1 rounded" : "text-slate-800"}`}>
+                            {Math.round(p.stockFinal).toLocaleString()}
+                          </span>
+                          <div className="flex items-center gap-1.5 text-[9px] mt-0.5 text-slate-400">
+                            {p.arriboInyectado > 0 && (
+                              <span className="text-emerald-600 font-bold">
+                                +{Math.round(p.arriboInyectado).toLocaleString()}
+                              </span>
+                            )}
+                            <span>
+                              ↓{Math.round(p.demandaPredicha).toLocaleString()}
+                            </span>
+                          </div>
                         </div>
-                      ) : "-"}
-                    </td>
-                    <td className="p-3 md:p-4 text-center font-black">{Math.round(item.promedio).toLocaleString()}</td>
-                    <td className={`p-3 md:p-4 text-center font-black bg-blue-50 ${item.coberturaMeses < 2 ? 'text-red-600' : 'text-blue-700'}`}>
-                      {item.coberturaMeses.toFixed(1)}
-                    </td>
-                    <td className={`p-3 md:p-4 text-center font-black ${item.estado === 'COMPRAR YA' ? 'text-red-600 animate-pulse' : 'text-slate-500'}`}>
-                      {item.fechaQuiebre}
-                    </td>
-                    <td className="p-3 md:p-4 text-center font-black text-blue-700 bg-blue-50/50">
-                      {Math.round(item.pedidoSugerido).toLocaleString()}
-                    </td>
-                    {/* COLUMNAS DINÁMICAS */}
-                    {item.puntosGrafico.filter((p:any) => p.tipo === 'PROYECCION').map((p: any, idx: number) => (
-                      <td key={`${item.codigo}-col-${idx}`} className={`p-3 md:p-4 text-center font-bold ${p.stock <= 0 ? 'text-red-300 bg-red-50/30' : (p.llegaStock ? 'text-blue-600 bg-blue-100 font-black' : 'text-slate-800')}`}>
-                        {Math.round(p.stock).toLocaleString()}
                       </td>
                     ))}
                   </tr>
@@ -430,14 +453,9 @@ export default function ModuloAbastecimientoSAP() {
       </main>
 
       <style jsx global>{`
-        @import url('https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700;800;900&display=swap');
-        :root { --font-sans: 'Public Sans', sans-serif; }
-        body { font-family: var(--font-sans); background-color: #f4f7f9; margin: 0; }
-        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 8px; }
+        .custom-scrollbar::-webkit-scrollbar { width: 5px; height: 5px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: #f1f5f9; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
-        .animate-in { animation: fadeIn 0.4s ease-out; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
       `}</style>
     </div>
   );

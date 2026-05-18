@@ -1,271 +1,386 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabase";
-import { Search, Ship, X, Edit2, PackageCheck, Truck, Plus, Trash2, Save } from "lucide-react";
+import { Ship, Plus, Trash2, Calendar, Hash, Search, AlertCircle, Check } from "lucide-react";
 
-export default function GestionArribosSAP() {
-  const [materiales, setMateriales] = useState<any[]>([]);
+/**
+ * ARES SYSTEM - MÓDULO DE GESTIÓN DE ARRIBOS (CORREGIDO DEFINITIVO)
+ * - Mapeo exacto de columnas utilizando la columna física real 'user_id'.
+ * - Inyección automática del ID del usuario autenticado para cumplir restricciones NOT NULL.
+ * - Buscador en tiempo real de artículos por SKU o Descripción.
+ */
+
+export default function GestionArribos() {
+  const [arribos, setArribos] = useState<any[]>([]);
+  const [productos, setProductos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
-  const [filtroConArribo, setFiltroConArribo] = useState(false);
-  
-  const [modalAbierto, setModalAbierto] = useState(false);
-  const [itemSeleccionado, setItemSeleccionado] = useState<any>(null);
-  const [arribosDetalle, setArribosDetalle] = useState<any[]>([]);
-  const [guardando, setGuardando] = useState(false);
+  const [searchTerm, setSearchTerm] = useState(""); 
 
-  // Lista de meses para las columnas de la tabla (ajusta según necesites)
-  const MESES = [
-    { id: 4, nombre: "MAY" },
-    { id: 5, nombre: "JUN" },
-    { id: 6, nombre: "JUL" },
-    { id: 7, nombre: "AGO" },
-    { id: 8, nombre: "SEP" },
-    { id: 9, nombre: "OCT" },
-  ];
+  // Estado para el buscador interactivo de productos (Formulario)
+  const [busquedaProducto, setBusquedaProducto] = useState("");
+  const [mostrarDropdown, setMostrarDropdown] = useState(false);
+  const [productoSeleccionado, setProductoSeleccionado] = useState<any>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { fetchData(); }, []);
+  // Resto de estados del Formulario
+  const [quantity, setQuantity] = useState("");
+  const [etaDate, setEtaDate] = useState("");
+  const [orderCode, setOrderCode] = useState("");
+  const [errorForm, setErrorForm] = useState("");
+  const [successForm, setSuccessForm] = useState(false);
 
-  async function fetchData() {
-    setLoading(true);
-    
-    // Traemos datos en paralelo para mayor velocidad
-    const [maestroRes, arribosRes] = await Promise.all([
-      supabase.from("imp_maestro").select("codigo, descripcion, stock").order("codigo"),
-      supabase.from("imp_arribos").select("id, codigo, arribo, fecha_arribo")
-    ]);
+  useEffect(() => {
+    cargarDatos();
 
-    if (maestroRes.data && arribosRes.data) {
-      const dataUnificada = maestroRes.data.map(item => {
-        // Filtramos todos los arribos que pertenecen a este código
-        const arribosDelItem = arribosRes.data.filter(a => a.codigo === item.codigo);
-        
-        // Sumamos las cantidades
-        const totalArribos = arribosDelItem.reduce((sum, curr) => sum + Number(curr.arribo), 0);
-        
-        // Obtenemos el ETA más cercano (ordenando por fecha)
-        const proximoEta = arribosDelItem.length > 0 
-          ? arribosDelItem.sort((a,b) => new Date(a.fecha_arribo).getTime() - new Date(b.fecha_arribo).getTime())[0].fecha_arribo 
-          : null;
-
-        return {
-          ...item,
-          total_arribo: totalArribos,
-          lista_arribos: arribosDelItem, // Guardamos la lista para colorear los meses
-          tiene_multiples: arribosDelItem.length > 1,
-          primer_arribo: proximoEta
-        };
-      });
-      setMateriales(dataUnificada);
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setMostrarDropdown(false);
+      }
     }
-    setLoading(false);
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  async function cargarDatos() {
+    setLoading(true);
+    try {
+      const { data: dataArrivals, error: errArr } = await supabase
+        .from("arrivals")
+        .select(`
+          id,
+          quantity,
+          eta_date,
+          order_code,
+          created_at,
+          product_id,
+          products (
+            code,
+            description,
+            family
+          )
+        `)
+        .order("eta_date", { ascending: true });
+
+      if (errArr) throw errArr;
+      setArribos(dataArrivals || []);
+
+      const { data: dataProducts, error: errProd } = await supabase
+        .from("products")
+        .select("id, code, description")
+        .order("code", { ascending: true });
+
+      if (errProd) throw errProd;
+      setProductos(dataProducts || []);
+
+    } catch (error: any) {
+      console.error("Error al cargar el módulo de arribos:", error);
+      setErrorForm(`Error de sincronización con Supabase: ${error?.message || error}`);
+    } finally {
+      setLoading(false);
+    }
   }
 
-  // Lógica para determinar si un mes específico tiene arribos planificados
-  const tieneArriboEnMes = (lista: any[], mesIndex: number) => {
-    return lista.some(a => {
-      if (!a.fecha_arribo) return false;
-      const fecha = new Date(a.fecha_arribo + "T12:00:00");
-      return fecha.getMonth() === mesIndex;
-    });
-  };
+  async function handleAgregarArribo(e: React.FormEvent) {
+    e.preventDefault();
+    setErrorForm("");
+    setSuccessForm(false);
 
-  const abrirModal = async (item: any) => {
-    setItemSeleccionado(item);
-    setArribosDetalle(item.lista_arribos || []);
-    setModalAbierto(true);
-  };
-
-  const cerrarModal = () => {
-    setModalAbierto(false);
-    setItemSeleccionado(null);
-    setArribosDetalle([]);
-  };
-
-  const agregarFila = () => {
-    setArribosDetalle([...arribosDetalle, { id: `temp_${Date.now()}`, arribo: "", fecha_arribo: "" }]);
-  };
-
-  const actualizarFila = (id: any, campo: string, valor: any) => {
-    setArribosDetalle(prev => prev.map(fila => 
-      fila.id === id ? { ...fila, [campo]: valor } : fila
-    ));
-  };
-
-  const eliminarFila = async (id: any) => {
-    if (typeof id === 'number') {
-      await supabase.from("imp_arribos").delete().eq("id", id);
+    if (!productoSeleccionado || !quantity || !etaDate) {
+      setErrorForm("Por favor, selecciona un Producto e introduce Cantidad y Fecha ETA.");
+      return;
     }
-    setArribosDetalle(prev => prev.filter(fila => fila.id !== id));
-  };
 
-  const guardarArribosMultiples = async () => {
-    setGuardando(true);
     try {
-      const codigo = itemSeleccionado.codigo;
-
-      const nuevos = arribosDetalle
-        .filter(f => typeof f.id === 'string' && f.id.startsWith('temp_') && Number(f.arribo) > 0 && f.fecha_arribo)
-        .map(f => ({ codigo, arribo: Number(f.arribo), fecha_arribo: f.fecha_arribo }));
-
-      const existentes = arribosDetalle
-        .filter(f => typeof f.id === 'number' && Number(f.arribo) > 0 && f.fecha_arribo)
-        .map(f => ({ id: f.id, codigo, arribo: Number(f.arribo), fecha_arribo: f.fecha_arribo }));
-
-      if (nuevos.length > 0) {
-        const { error: err1 } = await supabase.from("imp_arribos").insert(nuevos);
-        if (err1) throw err1;
-      }
-      if (existentes.length > 0) {
-        const { error: err2 } = await supabase.from("imp_arribos").upsert(existentes);
-        if (err2) throw err2;
+      // Obtener el usuario autenticado actual para evitar violaciones de 'user_id' NOT NULL
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      
+      if (userError || !user) {
+        throw new Error("No se pudo verificar la sesión del usuario. Por favor, inicia sesión nuevamente.");
       }
 
-      await fetchData();
-      cerrarModal();
-    } catch (error) {
-      console.error(error);
-      alert("Error al guardar.");
-    } finally {
-      setGuardando(false);
+      // Inserción limpia utilizando la columna física real 'user_id'
+      const { error } = await supabase.from("arrivals").insert([
+        {
+          product_id: productoSeleccionado.id,
+          quantity: Number(quantity),
+          eta_date: etaDate,
+          order_code: orderCode.trim() || null,
+          user_id: user.id // Corregido a la columna real del sistema
+        }
+      ]);
+
+      if (error) throw error;
+
+      setQuantity("");
+      setEtaDate("");
+      setOrderCode("");
+      setBusquedaProducto("");
+      setProductoSeleccionado(null);
+      setSuccessForm(true);
+      cargarDatos();
+    } catch (err: any) {
+      setErrorForm(`Error de base de datos al guardar: ${err.message || err}`);
     }
-  };
+  }
 
-  const dataFiltrada = materiales.filter(m => {
-    const busqueda = search.toLowerCase();
-    const cumpleBusqueda = m.codigo?.toLowerCase().includes(busqueda) || 
-                           m.descripcion?.toLowerCase().includes(busqueda);
-    const cumpleFiltro = filtroConArribo ? (m.total_arribo > 0) : true;
-    return cumpleBusqueda && cumpleFiltro;
+  async function handleEliminarArribo(id: string) {
+    if (confirm("¿Deseas eliminar este arribo? Al hacerlo, dejará de sumar en la simulación de inventario futuro.")) {
+      try {
+        const { error } = await supabase.from("arrivals").delete().eq("id", id);
+        if (error) throw error;
+        cargarDatos();
+      } catch (err) {
+        console.error("Error al eliminar el registro de tránsito:", err);
+      }
+    }
+  }
+
+  const productosFiltradosSelector = productos.filter((p) => {
+    const minTerm = busquedaProducto.toLowerCase();
+    const codigo = p.code?.toLowerCase() || "";
+    const desc = p.description?.toLowerCase() || "";
+    return codigo.includes(minTerm) || desc.includes(minTerm);
   });
 
+  const arribosFiltradosTabla = arribos.filter((a) => {
+    const sku = a.products?.code?.toLowerCase() || "";
+    const desc = a.products?.description?.toLowerCase() || "";
+    const orden = a.order_code?.toLowerCase() || "";
+    const term = searchTerm.toLowerCase();
+    return sku.includes(term) || desc.includes(term) || orden.includes(term);
+  });
+
+  if (loading) return (
+    <div className="min-h-[80vh] flex items-center justify-center bg-[#f8fafc]">
+      <div className="text-center space-y-2">
+        <div className="w-8 h-8 border-2 border-slate-800 border-t-transparent rounded-full animate-spin mx-auto"></div>
+        <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Conectando con las tablas de ARES System...</p>
+      </div>
+    </div>
+  );
+
   return (
-    <div className="bg-[#f4f7f9] min-h-screen font-sans text-[#1d2d3d] pb-10">
-      <header className="bg-[#1e293b] text-white p-4 shadow-lg flex justify-between items-center sticky top-0 z-40 border-b-4 border-blue-500">
-        <div className="flex items-center gap-4">
-          <div className="bg-blue-600 p-2 rounded shadow-inner"><Truck size={24} /></div>
-          <div>
-            <h1 className="text-xl font-black tracking-tighter">INBOUND LOGISTICS</h1>
-            <p className="text-[10px] text-blue-400 font-bold uppercase tracking-[0.2em]">Gestión Centralizada</p>
-          </div>
+    <div className="bg-[#f8fafc] min-h-screen text-slate-800 antialiased font-sans">
+      <header className="bg-white border-b border-slate-200 p-5">
+        <div className="flex items-center gap-2 text-slate-900 font-bold text-base tracking-tight">
+          <Ship size={18} className="text-blue-600" />
+          <span>Gestión de Arribos e Importaciones en Tránsito (ARES)</span>
         </div>
+        <p className="text-[11px] text-slate-400 font-medium mt-0.5">Control de cargas vivas encaminadas a la planta. Impacta directamente la simulación mensual.</p>
       </header>
 
-      <main className="max-w-[1600px] mx-auto p-6 space-y-6">
-        {/* Filtros */}
-        <div className="bg-white p-6 rounded-xl shadow-md flex flex-wrap gap-6 items-center justify-between border border-slate-200">
-          <div className="flex-1 min-w-[350px] relative">
-            <Search className="absolute left-4 top-3.5 text-slate-400" size={18} />
-            <input 
-              type="text" 
-              placeholder="Buscar material..." 
-              className="w-full pl-12 pr-4 py-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
-              onChange={(e) => setSearch(e.target.value)}
-            />
+      <main className="p-5 max-w-[1920px] mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm h-fit space-y-4">
+          <div className="flex items-center gap-1.5 border-b border-slate-100 pb-3">
+            <Plus size={16} className="text-blue-600" />
+            <h2 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Inyectar Nuevo Tránsito</h2>
           </div>
-          <button 
-            onClick={() => setFiltroConArribo(!filtroConArribo)}
-            className={`px-6 py-3 rounded-xl text-xs font-black transition-all border ${filtroConArribo ? 'bg-blue-600 text-white border-blue-700' : 'bg-white text-slate-600'}`}
-          >
-            {filtroConArribo ? "CÓDIGOS EN TRÁNSITO" : "VER TODO EL MAESTRO"}
-          </button>
+
+          <form onSubmit={handleAgregarArribo} className="space-y-3">
+            <div className="relative" ref={dropdownRef}>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                Buscar Artículo o Nombre *
+              </label>
+              <div className="relative">
+                <Search className="absolute left-2.5 top-2.5 text-slate-400" size={13} />
+                <input
+                  type="text"
+                  placeholder="Escribe código SKU o descripción..."
+                  className={`w-full pl-8 pr-2 py-2 bg-slate-50 border ${productoSeleccionado ? 'border-emerald-300 bg-emerald-50/10' : 'border-slate-200'} rounded-lg text-[11px] font-semibold outline-none focus:bg-white focus:border-slate-400`}
+                  value={busquedaProducto}
+                  onChange={(e) => {
+                    setBusquedaProducto(e.target.value);
+                    setMostrarDropdown(true);
+                  }}
+                  onFocus={() => setMostrarDropdown(true)}
+                />
+              </div>
+
+              {mostrarDropdown && (
+                <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl max-h-[220px] overflow-y-auto custom-scrollbar">
+                  {productosFiltradosSelector.length === 0 ? (
+                    <div className="p-3 text-[11px] text-slate-400 text-center font-medium">
+                      Ningún producto coincide con la búsqueda.
+                    </div>
+                  ) : (
+                    productosFiltradosSelector.map((p) => (
+                      <div
+                        key={p.id}
+                        className={`p-2.5 hover:bg-slate-50 border-b border-slate-50 cursor-pointer flex flex-col gap-0.5 ${productoSeleccionado?.id === p.id ? 'bg-blue-50/40' : ''}`}
+                        onClick={() => {
+                          setProductoSeleccionado(p);
+                          setBusquedaProducto(`[${p.code}] ${p.description || ""}`);
+                          setMostrarDropdown(false);
+                        }}
+                      >
+                        <div className="flex items-center justify-between text-[11px] font-bold text-slate-900">
+                          <span>SKU: {p.code}</span>
+                          {productoSeleccionado?.id === p.id && <Check size={11} className="text-emerald-600" />}
+                        </div>
+                        <div className="text-[10px] text-slate-500 font-medium truncate uppercase">
+                          {p.description || "SIN DESCRIPCIÓN COMERCIAL"}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+              {productoSeleccionado && (
+                <p className="text-[10px] text-emerald-600 font-bold mt-1">✓ Producto fijado correctamente.</p>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Cantidad *</label>
+                <input
+                  type="number"
+                  min="1"
+                  placeholder="0"
+                  className="w-full bg-slate-50 border border-slate-200 p-2 rounded-lg text-[11px] font-bold outline-none focus:bg-white"
+                  value={quantity}
+                  onChange={(e) => setQuantity(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Fecha ETA (Llegada) *</label>
+                <input
+                  type="date"
+                  className="w-full bg-slate-50 border border-slate-200 p-2 rounded-lg text-[11px] font-bold text-slate-600 outline-none focus:bg-white"
+                  value={etaDate}
+                  onChange={(e) => setEtaDate(e.target.value)}
+                  required
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Nº Orden Compra </label>
+              <div className="relative">
+                <Hash className="absolute left-2.5 top-2.5 text-slate-400" size={11} />
+                <input
+                  type="text"
+                  placeholder="9923"
+                  className="w-full pl-7 pr-2 py-2 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-medium outline-none focus:bg-white"
+                  value={orderCode}
+                  onChange={(e) => setOrderCode(e.target.value)}
+                />
+              </div>
+            </div>
+
+            {errorForm && (
+              <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-700 text-[10px] font-semibold rounded-lg flex items-center gap-1.5">
+                <AlertCircle size={12} />
+                <span className="break-all">{errorForm}</span>
+              </div>
+            )}
+
+            {successForm && (
+              <div className="p-2.5 bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-semibold rounded-lg">
+                ✓ Tránsito guardado. Reflejado en la simulación de inventario.
+              </div>
+            )}
+
+            <button
+              type="submit"
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] uppercase tracking-wider py-2.5 px-4 rounded-lg shadow-sm transition-all text-center"
+            >
+              Confirmar Arribo
+            </button>
+          </form>
         </div>
 
-        {/* Tabla Principal */}
-        <div className="bg-white rounded-2xl shadow-2xl border border-slate-300 overflow-hidden">
-          {loading ? (
-             <div className="p-20 text-center animate-pulse font-black text-slate-400">CARGANDO DATOS...</div>
-          ) : (
-            <div className="overflow-x-auto custom-scrollbar">
-              <table className="w-full text-left text-sm border-collapse">
-                <thead>
-                  <tr className="bg-slate-100 text-slate-600 font-bold uppercase text-[10px] sticky top-0 z-10 border-b border-slate-300">
-                    <th className="p-4 text-center">Edit</th>
-                    <th className="p-4">Código</th>
-                    <th className="p-4 w-64">Descripción</th>
-                    <th className="p-4 text-center">Stock</th>
-                    <th className="p-4 text-center bg-blue-50 text-blue-800">Tránsito</th>
-                    <th className="p-4 text-center">Próximo ETA</th>
-                    {MESES.map(m => (
-                      <th key={m.id} className="p-4 text-center border-l border-slate-200 w-20">{m.nombre}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {dataFiltrada.map(item => (
-                    <tr key={item.codigo} className="hover:bg-slate-50 transition-colors">
-                      <td className="p-3 text-center">
-                        <button onClick={() => abrirModal(item)} className="p-2 text-slate-400 hover:text-blue-600 transition-all">
-                          <Edit2 size={16}/>
-                        </button>
-                      </td>
-                      <td className="p-4 font-black text-slate-800">{item.codigo}</td>
-                      <td className="p-4 font-bold text-slate-500 uppercase text-[10px] truncate max-w-xs">{item.descripcion}</td>
-                      <td className="p-4 text-center font-black text-slate-700">{Number(item.stock || 0).toLocaleString()}</td>
-                      <td className="p-4 text-center bg-blue-50/50">
-                        <span className={`font-black text-base ${item.total_arribo > 0 ? 'text-blue-600' : 'text-slate-300'}`}>
-                          {item.total_arribo > 0 ? `+${item.total_arribo.toLocaleString()}` : "0"}
-                        </span>
-                      </td>
-                      <td className="p-4 text-center font-bold text-slate-600 text-xs">
-                        {item.primer_arribo ? new Date(`${item.primer_arribo}T12:00:00`).toLocaleDateString() : "---"}
-                      </td>
-                      {/* Celdas de Meses Coloreadas */}
-                      {MESES.map(mes => {
-                        const activo = tieneArriboEnMes(item.lista_arribos, mes.id);
-                        return (
-                          <td key={mes.id} className={`p-4 text-center border-l border-slate-100 transition-all ${activo ? 'bg-blue-500 text-white font-black' : 'text-slate-200'}`}>
-                            {activo ? <Ship size={14} className="mx-auto" /> : "0"}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden lg:col-span-2 flex flex-col">
+          <div className="p-4 bg-slate-50/60 border-b border-slate-200 flex items-center justify-between gap-4">
+            <div className="relative flex-1 max-w-md">
+              <Search className="absolute left-3 top-2.5 text-slate-400" size={13} />
+              <input
+                type="text"
+                placeholder="Filtrar por SKU, descripción o Código de Orden..."
+                className="w-full pl-9 pr-3 py-1.5 bg-white border border-slate-200 rounded-lg text-[11px] font-medium outline-none focus:border-slate-300"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
             </div>
-          )}
+            <span className="text-[10px] font-bold text-slate-400 bg-slate-100 border border-slate-200 px-2 py-1 rounded-md">
+              {arribosFiltradosTabla.length} CARGAS ACTIVAS
+            </span>
+          </div>
+
+          <div className="overflow-x-auto w-full flex-1 max-h-[650px] custom-scrollbar">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-[#0f172a] text-slate-200 font-semibold text-[10px] tracking-wider uppercase sticky top-0 z-10 whitespace-nowrap">
+                  <th className="p-3 border-b border-slate-700">Código</th>
+                  <th className="p-3 border-b border-slate-700">Descripción del Artículo</th>
+                  <th className="p-3 text-right border-b border-slate-700">Cant. Tránsito</th>
+                  <th className="p-3 text-center border-b border-slate-700 bg-blue-950 text-blue-300">Fecha ETA (Arribo)</th>
+                  <th className="p-3 border-b border-slate-700">Orden de Compra</th>
+                  <th className="p-3 text-center border-b border-slate-700 w-16">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-[11px]">
+                {arribosFiltradosTabla.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="p-8 text-center text-slate-400 font-medium">
+                      No hay compras en Tránsito registradas en el horizonte logístico.
+                    </td>
+                  </tr>
+                ) : (
+                  arribosFiltradosTabla.map((a) => {
+                    const fechaEtaFormatted = a.eta_date
+                      ? new Date(a.eta_date).toLocaleDateString("es-ES", {
+                          day: "2-digit",
+                          month: "long",
+                          year: "numeric",
+                          timeZone: "UTC"
+                        })
+                      : "---";
+
+                    return (
+                      <tr key={a.id} className="hover:bg-slate-50/60 transition-colors">
+                        <td className="p-3 font-bold text-slate-900 whitespace-nowrap">{a.products?.code || "MIGRADO"}</td>
+                        <td className="p-3 font-medium text-slate-600 truncate max-w-[240px]" title={a.products?.description}>
+                          {a.products?.description ? a.products.description.toUpperCase() : "SIN IDENTIFICACIÓN"}
+                        </td>
+                        <td className="p-3 text-right font-black text-blue-700 bg-blue-50/30">
+                          {Number(a.quantity).toLocaleString()}
+                        </td>
+                        <td className="p-3 text-center font-bold bg-blue-50/10 text-slate-800 whitespace-nowrap">
+                          <div className="flex items-center justify-center gap-1">
+                            <Calendar size={11} className="text-blue-500" />
+                            <span>{fechaEtaFormatted}</span>
+                          </div>
+                        </td>
+                        <td className="p-3 font-bold text-slate-500 whitespace-nowrap">
+                          {a.order_code || <span className="text-slate-300">---</span>}
+                        </td>
+                        <td className="p-3 text-center whitespace-nowrap">
+                          <button
+                            onClick={() => handleEliminarArribo(a.id)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors"
+                            title="Eliminar de la simulación"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </main>
 
-      {/* Modal - Mismo funcionamiento pero más robusto */}
-      {modalAbierto && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden">
-            <div className="bg-slate-800 text-white p-5 flex justify-between items-center">
-              <div>
-                <h2 className="font-black text-lg">Planificar Arribos</h2>
-                <p className="text-xs text-slate-300 font-bold">{itemSeleccionado?.codigo} - {itemSeleccionado?.descripcion}</p>
-              </div>
-              <button onClick={cerrarModal} className="p-2 hover:bg-red-500 rounded-lg"><X size={18}/></button>
-            </div>
-            <div className="p-6 bg-slate-50 space-y-3 max-h-[60vh] overflow-y-auto">
-              {arribosDetalle.map((fila) => (
-                <div key={fila.id} className="flex items-center gap-4 bg-white p-3 rounded-xl border shadow-sm">
-                  <div className="flex-1">
-                    <label className="text-[9px] font-bold text-slate-400 uppercase">Cantidad</label>
-                    <input type="number" className="w-full p-2 font-black border rounded-lg outline-none" value={fila.arribo} onChange={(e) => actualizarFila(fila.id, 'arribo', e.target.value)} />
-                  </div>
-                  <div className="flex-1">
-                    <label className="text-[9px] font-bold text-slate-400 uppercase">Fecha ETA</label>
-                    <input type="date" className="w-full p-2 font-bold border rounded-lg outline-none" value={fila.fecha_arribo} onChange={(e) => actualizarFila(fila.id, 'fecha_arribo', e.target.value)} />
-                  </div>
-                  <button onClick={() => eliminarFila(fila.id)} className="mt-4 p-2 text-red-500 hover:bg-red-50 rounded-lg"><Trash2 size={18} /></button>
-                </div>
-              ))}
-              <button onClick={agregarFila} className="w-full py-3 border-2 border-dashed border-blue-300 text-blue-600 font-bold rounded-xl hover:bg-blue-50 flex items-center justify-center gap-2">
-                <Plus size={18} /> AGREGAR NUEVO ARRIBO
-              </button>
-            </div>
-            <div className="p-4 border-t bg-white flex justify-end gap-3">
-              <button onClick={cerrarModal} className="px-5 py-2 font-bold text-slate-500">Cancelar</button>
-              <button onClick={guardarArribosMultiples} disabled={guardando} className="px-6 py-2 font-black text-white bg-blue-600 rounded-xl shadow-md">
-                {guardando ? 'Guardando...' : 'Guardar Cambios'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <style jsx global>{`
+        .custom-scrollbar::-webkit-scrollbar { width: 5px; height: 5px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #f1f5f9; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
+      `}</style>
     </div>
   );
 }
