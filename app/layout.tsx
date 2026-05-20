@@ -25,13 +25,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   const [userPerfil, setUserPerfil] = useState<UsuarioPerfil | null>(null);
   const [loadingUser, setLoadingUser] = useState(true);
 
-  const isHomePage = pathname === "/";
   const isLoginPage = pathname === "/login";
 
   useEffect(() => {
     const fetchUserData = async () => {
       try {
         setLoadingUser(true);
+        // Validar sesión activa real de Supabase
         const { data: { user } } = await supabase.auth.getUser();
 
         if (user) {
@@ -57,6 +57,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           }
         } else {
           setUserPerfil(null);
+          // Si no está en el login y no hay usuario, forzar login
+          if (!isLoginPage) {
+            router.push("/login");
+          }
         }
       } catch (err) {
         console.error("Error capturando datos de cuenta:", err);
@@ -67,6 +71,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
     fetchUserData();
 
+    // Escuchar cambios globales de auth
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === "SIGNED_OUT") {
         setUserPerfil(null);
@@ -77,22 +82,27 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     });
 
     return () => subscription.unsubscribe();
-  }, [router]);
+  }, [router, isLoginPage]);
 
-  const handleSignOut = async () => {
-    await supabase.auth.signOut();
-    router.push("/login");
-  };
+  // Si es la página de login, renderizar limpio sin layouts envolventes
+  if (isLoginPage) {
+    return <html lang="es"><body>{children}</body></html>;
+  }
 
-  const getInitials = () => {
-    if (!userPerfil?.nombre) return "??";
-    const parts = userPerfil.nombre.trim().split(" ");
-    return parts.length >= 2 
-      ? `${parts[0][0]}${parts[1][0]}`.toUpperCase() 
-      : parts[0].substring(0, 2).toUpperCase();
-  };
-
-  if (isLoginPage) return <html lang="es"><body>{children}</body></html>;
+  // PANTALLA DE CARGA GLOBAL REAL: Evita el parpadeo de datos privados antes de verificar la sesión
+  if (loadingUser) {
+    return (
+      <html lang="es">
+        <body className="bg-slate-50 flex flex-col items-center justify-center min-h-screen font-sans">
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-10 h-10 bg-slate-900 rounded-xl flex items-center justify-center text-white text-base font-bold font-mono shadow-md animate-pulse">A</div>
+            <div className="w-5 h-5 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Verificando credenciales...</p>
+          </div>
+        </body>
+      </html>
+    );
+  }
 
   const menuConfig = [
     {
@@ -121,8 +131,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
   const SidebarContent = () => (
     <div className="flex flex-col h-full bg-slate-50 border-r border-slate-200/60 select-none">
-      
-      {/* BRANDING LOGO */}
       <div className={`h-16 flex items-center ${isCollapsed ? "justify-center" : "px-5"} shrink-0 border-b border-slate-200/40`}>
         {isCollapsed ? (
           <div className="w-7 h-7 bg-slate-900 rounded-md flex items-center justify-center text-white text-xs font-bold font-mono">A</div>
@@ -134,7 +142,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         )}
       </div>
 
-      {/* MENÚ DE NAVEGACIÓN */}
       <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto overflow-x-hidden custom-scrollbar">
         {menuConfig.map((section) => (
           <div key={section.id} className="space-y-0.5">
@@ -163,13 +170,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               )}
             </button>
 
-            {/* SUBITEMS CON ANIMACIÓN */}
             <div className="overflow-hidden">
               {openSection === section.id && !isCollapsed && (
                 <motion.div 
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: "auto", opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
+                  initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }}
                   transition={{ duration: 0.15, ease: "easeOut" }}
                   className="pl-2"
                 >
@@ -198,122 +202,103 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </div>
         ))}
       </nav>
-
-      {/* PERFIL / CONFIGURACIÓN DE CUENTA */}
-      <div className="p-3 border-t border-slate-200/40 shrink-0 bg-slate-50">
-        {loadingUser ? (
-          <div className="h-12 w-full flex items-center justify-center">
-            <div className="w-3 h-3 border border-slate-300 border-t-slate-900 rounded-full animate-spin" />
-          </div>
-        ) : userPerfil && (
-          <div className="space-y-2">
-            <div className={`flex items-center gap-2 px-1 ${isCollapsed ? "justify-center" : ""}`}>
-              <div className="w-7 h-7 rounded-md border border-slate-200 text-slate-700 flex items-center justify-center font-semibold text-[10px] shrink-0 bg-white shadow-xs">
-                {getInitials()}
-              </div>
-              {!isCollapsed && (
-                <div className="min-w-0 flex-1">
-                  <p className="text-[11px] font-semibold text-slate-800 truncate leading-tight">
-                    {userPerfil.nombre}
-                  </p>
-                  <span className="text-[9px] font-medium text-slate-400 uppercase tracking-wider block truncate">
-                    {userPerfil.rol}
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {!isCollapsed ? (
-              <button 
-                onClick={handleSignOut} 
-                className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-md text-[10px] font-medium text-slate-500 hover:text-slate-900 hover:bg-white hover:border-slate-200/80 transition-all border border-transparent"
-              >
-                <LogOut size={11} />
-                Cerrar sesión
-              </button>
-            ) : (
-              <button 
-                onClick={handleSignOut} 
-                title="Cerrar sesión"
-                className="w-full flex items-center justify-center p-1.5 rounded-md text-slate-400 hover:text-slate-900 hover:bg-white hover:border-slate-200 transition-all border border-transparent"
-              >
-                <LogOut size={12} />
-              </button>
-            )}
-          </div>
-        )}
-      </div>
     </div>
   );
+
+//  PEGA ESTO EN SU LUGAR:
+const getInitials = () => {
+  if (!userPerfil?.nombre) return "??";
+  const parts = userPerfil.nombre.trim().split(" ");
+  return parts.length >= 2 
+    ? `${parts[0][0]}${parts[1][0]}`.toUpperCase() 
+    : parts[0].substring(0, 2).toUpperCase();
+};
 
   return (
     <html lang="es">
       <body className="bg-white text-slate-900 min-h-screen overflow-hidden font-sans antialiased selection:bg-slate-100">
         <div className="flex h-screen overflow-hidden">
           
-          {/* SIDEBAR ESCRITORIO (DINÁMICO SEGÚN COLAPSO) */}
-          {!isHomePage && (
-            <motion.aside 
-              className="hidden lg:flex flex-col shrink-0 z-30"
-              animate={{ width: isCollapsed ? 68 : 240 }}
-              transition={{ duration: 0.2, ease: "easeInOut" }}
-            >
-              <SidebarContent />
-            </motion.aside>
-          )}
+          <motion.aside 
+            className="hidden lg:flex flex-col shrink-0 z-30"
+            animate={{ width: isCollapsed ? 68 : 240 }}
+            transition={{ duration: 0.2, ease: "easeInOut" }}
+          >
+            <SidebarContent />
+          </motion.aside>
 
           <div className="flex-1 flex flex-col min-w-0 relative bg-white">
-            
-            {/* HEADER MINIMALISTA */}
             <header className="h-16 bg-white flex items-center justify-between px-6 z-40 border-b border-slate-100 shrink-0">
               <div className="flex items-center gap-3">
-                {!isHomePage && (
-                  <div className="flex items-center gap-2">
-                    {/* Botón Móvil */}
-                    <button onClick={() => setIsMobileMenuOpen(true)} className="lg:hidden p-1.5 text-slate-500 hover:bg-slate-50 rounded-md transition-colors">
-                      <Menu size={18} />
-                    </button>
-                    
-                    {/* Botón Colapsar Escritorio */}
-                    <button 
-                      onClick={() => setIsCollapsed(!isCollapsed)} 
-                      className="hidden lg:block p-1.5 text-slate-400 hover:text-slate-900 hover:bg-slate-50 rounded-md transition-all"
-                      title={isCollapsed ? "Expandir menú" : "Colapsar menú"}
-                    >
-                      {isCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
-                    </button>
+                <button onClick={() => setIsMobileMenuOpen(true)} className="lg:hidden p-1.5 text-slate-500 hover:bg-slate-50 rounded-md transition-colors">
+                  <Menu size={18} />
+                </button>
+                
+                <button 
+                  onClick={() => setIsCollapsed(!isCollapsed)} 
+                  className="hidden lg:block p-1.5 text-slate-400 hover:text-slate-900 hover:bg-slate-50 rounded-md transition-all"
+                  title={isCollapsed ? "Expandir menú" : "Colapsar menú"}
+                >
+                  {isCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+                </button>
 
-                    <button onClick={() => router.push("/")} className="flex items-center gap-0.5 text-slate-400 hover:text-slate-800 transition-colors text-xs font-medium group ml-1">
-                      <ChevronLeft size={14} /> 
-                      Deslizar
-                    </button>
-                  </div>
-                )}
-                {!isHomePage && <div className="h-4 w-[1px] bg-slate-200 hidden sm:block mx-1" />}
+                <button onClick={() => router.push("/")} className="flex items-center gap-0.5 text-slate-400 hover:text-slate-800 transition-colors text-xs font-medium group ml-1">
+                  <ChevronLeft size={14} /> 
+                  Deslizar
+                </button>
+                <div className="h-4 w-[1px] bg-slate-200 hidden sm:block mx-1" />
                 <span className="text-[9px] font-semibold text-slate-400 tracking-[0.2em] uppercase hidden sm:block">
                   Simulación de Abastecimiento 
                 </span>
               </div>
 
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-4">
                 <div className="hidden md:flex items-center gap-1.5 text-slate-500 px-2 py-0.5 rounded-md text-[9px] font-semibold border border-slate-200/60 bg-slate-50 tracking-wider uppercase">
                   <div className="w-1 h-1 bg-emerald-500 rounded-full animate-pulse" />
                   Live
                 </div>
+
+                {/* PERFIL EXPUESTO Y BOTÓN DE LOGOUT PERMANENTE EN HEADER */}
+                {userPerfil && (
+                  <div className="flex items-center gap-3 border-l border-slate-100 pl-4">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-md border border-slate-200 text-slate-700 flex items-center justify-center font-bold text-[10px] bg-slate-50 shadow-xs">
+                        {getInitials()}
+                      </div>
+                      <div className="hidden sm:block text-left">
+                        <p className="text-[11px] font-bold text-slate-800 truncate leading-tight max-w-[120px]">
+                          {userPerfil.nombre}
+                        </p>
+                        <span className="text-[9px] font-bold text-blue-600 uppercase tracking-wide block">
+                          {userPerfil.rol}
+                        </span>
+                      </div>
+                    </div>
+
+                    <button 
+                      onClick={async () => {
+                        await supabase.auth.signOut();
+                        router.push("/login");
+                      }} 
+                      title="Cerrar sesión"
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50/50 transition-all"
+                    >
+                      <LogOut size={13} />
+                    </button>
+                  </div>
+                )}
+
                 <div className="w-7 h-7 rounded-md border border-slate-200/60 flex items-center justify-center text-slate-400 hover:text-slate-900 transition-colors cursor-pointer">
                   <Zap size={12} />
                 </div>
               </div>
             </header>
 
-            {/* CONTENEDOR PRINCIPAL */}
             <main className="flex-1 overflow-y-auto relative bg-white">
               <AnimatePresence mode="wait">
                 <motion.div 
                   key={pathname}
-                  initial={{ opacity: 0, y: 4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -4 }}
+                  initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
                   transition={{ duration: 0.15, ease: "easeOut" }}
                   className="h-full"
                 >
@@ -322,28 +307,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </AnimatePresence>
             </main>
           </div>
-
-          {/* SIDEBAR MÓVIL (MANTIENE ANCHO COMPLETO SIEMPRE) */}
-          <AnimatePresence>
-            {isMobileMenuOpen && (
-              <div className="fixed inset-0 z-50 lg:hidden">
-                <motion.div 
-                  initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                  transition={{ duration: 0.15 }}
-                  className="absolute inset-0 bg-slate-950/20 backdrop-blur-xs" 
-                  onClick={() => setIsMobileMenuOpen(false)} 
-                />
-                <motion.aside 
-                  initial={{ x: "-100%" }} animate={{ x: 0 }} exit={{ x: "-100%" }}
-                  transition={{ duration: 0.2, ease: "easeOut" }}
-                  className="absolute top-0 left-0 bottom-0 w-[240px] bg-white shadow-xl"
-                >
-                  <SidebarContent />
-                </motion.aside>
-              </div>
-            )}
-          </AnimatePresence>
-
         </div>
       </body>
     </html>

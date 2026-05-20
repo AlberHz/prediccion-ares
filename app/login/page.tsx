@@ -49,7 +49,7 @@ export default function LoginPage() {
         <div className="relative z-10">
           <div className="flex items-center gap-2 mb-16">
             <div className="w-8 h-8 bg-slate-900 rounded-lg flex items-center justify-center text-white text-sm font-bold font-mono shadow-md">A</div>
-            <span className="text-sm font-bold tracking-wider uppercase text-slate-800">Ares System</span>
+            <span className="text-sm font-bold tracking-wider uppercase text-slate-800">Sistema Predicitivo Ares Group </span>
           </div>
           
           <motion.div initial={{opacity:0, y:12}} animate={{opacity:1, y:0}} transition={{duration: 0.4}} className="space-y-4 max-w-lg">
@@ -57,7 +57,7 @@ export default function LoginPage() {
               Proyección de <span className="text-slate-800 underline decoration-slate-300 decoration-4 underline-offset-4">Demanda</span> <br /> y Flujo de Compras.
             </h1>
             <p className="text-sm text-slate-500 font-medium leading-relaxed">
-              Plataforma analítica avanzada y automatizada para la simulación de importaciones, cálculo de Lead Times y abastecimiento de materias primas.
+              Plataforma analítica para la simulación de importaciones, cálculo de Lead Times y abastecimiento de materias primas.
             </p>
           </motion.div>
         </div>
@@ -108,7 +108,7 @@ export default function LoginPage() {
                 <BarChart3 size={18}/>
               </div>
               <div>
-                <h2 className="text-[9px] font-bold text-slate-400 uppercase tracking-[0.18em]">Módulo Control de Inventarios</h2>
+                <h2 className="text-[9px] font-bold text-slate-400 uppercase tracking-[0.18em]">Módulo Control de Compras</h2>
                 <p className="text-lg font-bold text-slate-900 tracking-tight">Ingreso al Sistema</p>
               </div>
             </div>
@@ -193,9 +193,9 @@ export default function LoginPage() {
             </form>
           </div>
           
-          <footer className="mt-8 text-center text-slate-400 text-[9px] font-medium tracking-wider space-y-1">
-            <p>ARES IBP Planning Core v1.0 | © 2026 Supply Chain</p>
-            <p className="text-slate-400/70 font-semibold">Desarrollado por Alber Hernández</p>
+          <footer className="mt-8 text-center text-slate-600 text-[12px] font-medium tracking-wider space-y-1">
+            <p>ARES Planning Core v1.0 | © 2026 Supply Chain</p>
+            <p className="text-slate-600 font-semibold">Desarrollado por Alber Hernández</p>
           </footer>
         </motion.div>
       </div>

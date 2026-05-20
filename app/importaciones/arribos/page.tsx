@@ -1,13 +1,13 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabase";
-import { Ship, Plus, Trash2, Calendar, Hash, Search, AlertCircle, Check } from "lucide-react";
+import { Ship, Plus, Trash2, Calendar, Hash, Search, AlertCircle, Check, Edit2, Save, X } from "lucide-react";
 
 /**
- * ARES SYSTEM - MÓDULO DE GESTIÓN DE ARRIBOS (CORREGIDO DEFINITIVO)
- * - Mapeo exacto de columnas utilizando la columna física real 'user_id'.
- * - Inyección automática del ID del usuario autenticado para cumplir restricciones NOT NULL.
- * - Buscador en tiempo real de artículos por SKU o Descripción.
+ * ARES SYSTEM - MÓDULO DE GESTIÓN DE ARRIBOS (COMPILACIÓN CORREGIDA)
+ * - Nueva disposición vertical (Formulario arriba, Tabla completa abajo).
+ * - Edición DUAL inline de cantidades Y fechas directo en la tabla con persistencia completa.
+ * - Iconografía marítima integrada en las filas de tránsito.
  */
 
 export default function GestionArribos() {
@@ -16,13 +16,18 @@ export default function GestionArribos() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState(""); 
 
+  // Estados para la edición integral en línea de la fila
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingQuantity, setEditingQuantity] = useState<string>("");
+  const [editingEtaDate, setEditingEtaDate] = useState<string>("");
+
   // Estado para el buscador interactivo de productos (Formulario)
   const [busquedaProducto, setBusquedaProducto] = useState("");
   const [mostrarDropdown, setMostrarDropdown] = useState(false);
   const [productoSeleccionado, setProductoSeleccionado] = useState<any>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Resto de estados del Formulario
+  // Resto de estados del Formulario de inserción
   const [quantity, setQuantity] = useState("");
   const [etaDate, setEtaDate] = useState("");
   const [orderCode, setOrderCode] = useState("");
@@ -91,21 +96,19 @@ export default function GestionArribos() {
     }
 
     try {
-      // Obtener el usuario autenticado actual para evitar violaciones de 'user_id' NOT NULL
       const { data: { user }, error: userError } = await supabase.auth.getUser();
       
       if (userError || !user) {
         throw new Error("No se pudo verificar la sesión del usuario. Por favor, inicia sesión nuevamente.");
       }
 
-      // Inserción limpia utilizando la columna física real 'user_id'
       const { error } = await supabase.from("arrivals").insert([
         {
           product_id: productoSeleccionado.id,
           quantity: Number(quantity),
           eta_date: etaDate,
           order_code: orderCode.trim() || null,
-          user_id: user.id // Corregido a la columna real del sistema
+          user_id: user.id
         }
       ]);
 
@@ -120,6 +123,38 @@ export default function GestionArribos() {
       cargarDatos();
     } catch (err: any) {
       setErrorForm(`Error de base de datos al guardar: ${err.message || err}`);
+    }
+  }
+
+  async function handleGuardarEdicionCompleta(id: string) {
+    const nuevaCant = Number(editingQuantity);
+    
+    if (isNaN(nuevaCant) || nuevaCant <= 0) {
+      alert("Por favor introduce una cantidad válida mayor que cero.");
+      return;
+    }
+    if (!editingEtaDate) {
+      alert("Por favor selecciona una fecha de arribo válida.");
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from("arrivals")
+        .update({ 
+          quantity: nuevaCant,
+          eta_date: editingEtaDate
+        })
+        .eq("id", id);
+
+      if (error) throw error;
+
+      setEditingId(null);
+      setArribos(arribos.map(item => 
+        item.id === id ? { ...item, quantity: nuevaCant, eta_date: editingEtaDate } : item
+      ));
+    } catch (err: any) {
+      alert(`Error de red al actualizar los datos de arribo: ${err.message || err}`);
     }
   }
 
@@ -169,15 +204,17 @@ export default function GestionArribos() {
         <p className="text-[11px] text-slate-400 font-medium mt-0.5">Control de cargas vivas encaminadas a la planta. Impacta directamente la simulación mensual.</p>
       </header>
 
-      <main className="p-5 max-w-[1920px] mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm h-fit space-y-4">
-          <div className="flex items-center gap-1.5 border-b border-slate-100 pb-3">
+      <main className="p-5 max-w-[1920px] mx-auto space-y-6">
+        
+        {/* ================= SECCIÓN FORMULARIO ================= */}
+        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+          <div className="flex items-center gap-1.5 border-b border-slate-100 pb-3 mb-4">
             <Plus size={16} className="text-blue-600" />
-            <h2 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Inyectar Nuevo Tránsito</h2>
+            <h2 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Inyectar Nuevo Tránsito al Flujo Logístico</h2>
           </div>
 
-          <form onSubmit={handleAgregarArribo} className="space-y-3">
-            <div className="relative" ref={dropdownRef}>
+          <form onSubmit={handleAgregarArribo} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+            <div className="relative md:col-span-1" ref={dropdownRef}>
               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
                 Buscar Artículo o Nombre *
               </label>
@@ -225,35 +262,30 @@ export default function GestionArribos() {
                   )}
                 </div>
               )}
-              {productoSeleccionado && (
-                <p className="text-[10px] text-emerald-600 font-bold mt-1">✓ Producto fijado correctamente.</p>
-              )}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Cantidad *</label>
-                <input
-                  type="number"
-                  min="1"
-                  placeholder="0"
-                  className="w-full bg-slate-50 border border-slate-200 p-2 rounded-lg text-[11px] font-bold outline-none focus:bg-white"
-                  value={quantity}
-                  onChange={(e) => setQuantity(e.target.value)}
-                  required
-                />
-              </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Cantidad *</label>
+              <input
+                type="number"
+                min="1"
+                placeholder="0"
+                className="w-full bg-slate-50 border border-slate-200 p-2 rounded-lg text-[11px] font-bold outline-none focus:bg-white"
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value)}
+                required
+              />
+            </div>
 
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Fecha ETA (Llegada) *</label>
-                <input
-                  type="date"
-                  className="w-full bg-slate-50 border border-slate-200 p-2 rounded-lg text-[11px] font-bold text-slate-600 outline-none focus:bg-white"
-                  value={etaDate}
-                  onChange={(e) => setEtaDate(e.target.value)}
-                  required
-                />
-              </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Fecha ETA (Llegada) *</label>
+              <input
+                type="date"
+                className="w-full bg-slate-50 border border-slate-200 p-2 rounded-lg text-[11px] font-bold text-slate-600 outline-none focus:bg-white"
+                value={etaDate}
+                onChange={(e) => setEtaDate(e.target.value)}
+                required
+              />
             </div>
 
             <div>
@@ -270,41 +302,44 @@ export default function GestionArribos() {
               </div>
             </div>
 
-            {errorForm && (
-              <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-700 text-[10px] font-semibold rounded-lg flex items-center gap-1.5">
-                <AlertCircle size={12} />
-                <span className="break-all">{errorForm}</span>
+            <div className="md:col-span-4 flex flex-col sm:flex-row justify-between items-center pt-2 gap-2">
+              <div className="w-full sm:w-auto">
+                {errorForm && (
+                  <div className="p-2 bg-rose-50 border border-rose-200 text-rose-700 text-[10px] font-semibold rounded-lg flex items-center gap-1.5">
+                    <AlertCircle size={12} />
+                    <span className="break-all">{errorForm}</span>
+                  </div>
+                )}
+                {successForm && (
+                  <div className="p-2 bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-semibold rounded-lg">
+                    ✓ Tránsito guardado exitosamente. Reflejado en el horizonte logístico.
+                  </div>
+                )}
               </div>
-            )}
-
-            {successForm && (
-              <div className="p-2.5 bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-semibold rounded-lg">
-                ✓ Tránsito guardado. Reflejado en la simulación de inventario.
-              </div>
-            )}
-
-            <button
-              type="submit"
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] uppercase tracking-wider py-2.5 px-4 rounded-lg shadow-sm transition-all text-center"
-            >
-              Confirmar Arribo
-            </button>
+              <button
+                type="submit"
+                className="w-full sm:w-48 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] uppercase tracking-wider py-2.5 px-4 rounded-lg shadow-sm transition-all text-center"
+              >
+                Confirmar Arribo
+              </button>
+            </div>
           </form>
         </div>
 
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden lg:col-span-2 flex flex-col">
-          <div className="p-4 bg-slate-50/60 border-b border-slate-200 flex items-center justify-between gap-4">
-            <div className="relative flex-1 max-w-md">
+        {/* ================= SECCIÓN TABLA COMPLETA ================= */}
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+          <div className="p-4 bg-slate-50/60 border-b border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="relative flex-1 w-full max-w-md">
               <Search className="absolute left-3 top-2.5 text-slate-400" size={13} />
               <input
                 type="text"
-                placeholder="Filtrar por SKU, descripción o Código de Orden..."
+                placeholder="Filtrar cargas por SKU, descripción o Código de Orden..."
                 className="w-full pl-9 pr-3 py-1.5 bg-white border border-slate-200 rounded-lg text-[11px] font-medium outline-none focus:border-slate-300"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
             </div>
-            <span className="text-[10px] font-bold text-slate-400 bg-slate-100 border border-slate-200 px-2 py-1 rounded-md">
+            <span className="text-[10px] font-bold text-slate-400 bg-slate-100 border border-slate-200 px-2 py-1 rounded-md self-end sm:self-auto">
               {arribosFiltradosTabla.length} CARGAS ACTIVAS
             </span>
           </div>
@@ -313,12 +348,12 @@ export default function GestionArribos() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-[#0f172a] text-slate-200 font-semibold text-[10px] tracking-wider uppercase sticky top-0 z-10 whitespace-nowrap">
-                  <th className="p-3 border-b border-slate-700">Código</th>
+                  <th className="p-3 border-b border-slate-700">Código SKU</th>
                   <th className="p-3 border-b border-slate-700">Descripción del Artículo</th>
-                  <th className="p-3 text-right border-b border-slate-700">Cant. Tránsito</th>
-                  <th className="p-3 text-center border-b border-slate-700 bg-blue-950 text-blue-300">Fecha ETA (Arribo)</th>
+                  <th className="p-3 text-right border-b border-slate-700 w-40">Cant. Tránsito</th>
+                  <th className="p-3 text-center border-b border-slate-700 bg-blue-950 text-blue-300 w-56">Fecha ETA (Arribo)</th>
                   <th className="p-3 border-b border-slate-700">Orden de Compra</th>
-                  <th className="p-3 text-center border-b border-slate-700 w-16">Acciones</th>
+                  <th className="p-3 text-center border-b border-slate-700 w-24">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-[11px]">
@@ -330,6 +365,8 @@ export default function GestionArribos() {
                   </tr>
                 ) : (
                   arribosFiltradosTabla.map((a) => {
+                    const isEditing = editingId === a.id;
+
                     const fechaEtaFormatted = a.eta_date
                       ? new Date(a.eta_date).toLocaleDateString("es-ES", {
                           day: "2-digit",
@@ -341,30 +378,99 @@ export default function GestionArribos() {
 
                     return (
                       <tr key={a.id} className="hover:bg-slate-50/60 transition-colors">
-                        <td className="p-3 font-bold text-slate-900 whitespace-nowrap">{a.products?.code || "MIGRADO"}</td>
-                        <td className="p-3 font-medium text-slate-600 truncate max-w-[240px]" title={a.products?.description}>
-                          {a.products?.description ? a.products.description.toUpperCase() : "SIN IDENTIFICACIÓN"}
-                        </td>
-                        <td className="p-3 text-right font-black text-blue-700 bg-blue-50/30">
-                          {Number(a.quantity).toLocaleString()}
-                        </td>
-                        <td className="p-3 text-center font-bold bg-blue-50/10 text-slate-800 whitespace-nowrap">
-                          <div className="flex items-center justify-center gap-1">
-                            <Calendar size={11} className="text-blue-500" />
-                            <span>{fechaEtaFormatted}</span>
+                        
+                        <td className="p-3 font-bold text-slate-900 whitespace-nowrap">
+                          <div className="flex items-center gap-1.5">
+                            <Ship size={13} className="text-blue-500 animate-pulse" />
+                            <span>{a.products?.code || "MIGRADO"}</span>
                           </div>
                         </td>
+                        
+                        <td className="p-3 font-medium text-slate-600 truncate max-w-[320px]" title={a.products?.description}>
+                          {a.products?.description ? a.products.description.toUpperCase() : "SIN IDENTIFICACIÓN"}
+                        </td>
+
+                        {/* CANTIDAD EDITABLE INLINE */}
+                        <td className="p-2 text-right font-black text-blue-700 bg-blue-50/30">
+                          {isEditing ? (
+                            <input
+                              type="number"
+                              min="1"
+                              className="w-28 p-1 text-right border border-blue-400 bg-white rounded text-[11px] font-bold outline-none text-slate-900 focus:ring-1 focus:ring-blue-500"
+                              value={editingQuantity}
+                              onChange={(e) => setEditingQuantity(e.target.value)}
+                            />
+                          ) : (
+                            <span className="px-1">{Number(a.quantity).toLocaleString()}</span>
+                          )}
+                        </td>
+
+                        {/* FECHA ETA EDITABLE INLINE */}
+                        <td className="p-2 text-center font-bold bg-blue-50/10 text-slate-800 whitespace-nowrap">
+                          {isEditing ? (
+                            <div className="flex items-center justify-center">
+                              <input
+                                type="date"
+                                className="p-1 border border-blue-400 bg-white rounded text-[11px] font-bold outline-none text-slate-700 focus:ring-1 focus:ring-blue-500"
+                                value={editingEtaDate}
+                                onChange={(e) => setEditingEtaDate(e.target.value)}
+                              />
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-center gap-1">
+                              <Calendar size={11} className="text-blue-500" />
+                              <span>{fechaEtaFormatted}</span>
+                            </div>
+                          )}
+                        </td>
+                        
                         <td className="p-3 font-bold text-slate-500 whitespace-nowrap">
                           {a.order_code || <span className="text-slate-300">---</span>}
                         </td>
+
+                        {/* ACCIONES DE EDICIÓN COMBINADA */}
                         <td className="p-3 text-center whitespace-nowrap">
-                          <button
-                            onClick={() => handleEliminarArribo(a.id)}
-                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors"
-                            title="Eliminar de la simulación"
-                          >
-                            <Trash2 size={13} />
-                          </button>
+                          <div className="flex items-center justify-center gap-1">
+                            {isEditing ? (
+                              <>
+                                <button
+                                  onClick={() => handleGuardarEdicionCompleta(a.id)}
+                                  className="p-1 text-emerald-600 hover:bg-emerald-50 rounded"
+                                  title="Guardar Cantidad y Fecha"
+                                >
+                                  <Save size={13} />
+                                </button>
+                                <button
+                                  onClick={() => setEditingId(null)}
+                                  className="p-1 text-slate-400 hover:bg-slate-100 rounded"
+                                  title="Cancelar"
+                                >
+                                  <X size={13} />
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  onClick={() => {
+                                    setEditingId(a.id);
+                                    setEditingQuantity(String(a.quantity));
+                                    setEditingEtaDate(a.eta_date || "");
+                                  }}
+                                  className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+                                  title="Modificar Arribo"
+                                >
+                                  <Edit2 size={13} />
+                                </button>
+                                <button
+                                  onClick={() => handleEliminarArribo(a.id)}
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors"
+                                  title="Eliminar de la simulación"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );
