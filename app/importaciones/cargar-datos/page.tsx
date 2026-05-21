@@ -47,7 +47,7 @@ export default function CargarDatosPage() {
     reader.readAsBinaryString(file);
   };
 
-  // 2. EJECUCIÓN DIRECTA A SUPABASE (Sin servicios externos)
+  // 2. EJECUCIÓN DIRECTA A SUPABASE
   const handleInyeccionDatos = async () => {
     if (dataStock.length === 0 && dataMovements.length === 0) {
       setStatus({ type: "error", msg: "No se han detectado datos válidos." });
@@ -63,11 +63,13 @@ export default function CargarDatosPage() {
 
       let mensajeExito = "Sincronización Exitosa: ";
 
-      // BLOQUE A: Inyección de Catálogo y Stock Actual
+      // ==========================================
+      // BLOQUE A: Actualización de Stock y Costo (UPDATE / UPSERT SEGURO)
+      // ==========================================
       if (dataStock.length > 0) {
         const productsToUpsert = dataStock.map(item => ({
           user_id: user.id,
-          code: item.code,
+          code: String(item.code).trim(),
           description: item.description,
           stock: item.stock,            
           unit: item.unit,
@@ -79,15 +81,21 @@ export default function CargarDatosPage() {
 
         const { error: stockError } = await supabase
           .from("products")
-          .upsert(productsToUpsert, { onConflict: "user_id, code" });
+          .upsert(productsToUpsert, { 
+            onConflict: "user_id,code",
+            ignoreDuplicates: false 
+          });
 
-        if (stockError) throw new Error(`Fallo en Catálogo: ${stockError.message}`);
-        mensajeExito += `[${dataStock.length} SKUs actualizados] `;
+        if (stockError) {
+          throw new Error(`Fallo en actualización de Catálogo: ${stockError.message}. Verifica si creaste el índice único en la base de datos.`);
+        }
+        mensajeExito += `[${dataStock.length} SKUs actualizados correctamente] `;
       }
 
-      // BLOQUE B: Inyección de Historial de Movimientos
+      // ==========================================
+      // BLOQUE B: Inyección Masiva de Movimientos (INSERT)
+      // ==========================================
       if (dataMovements.length > 0) {
-        // Necesitamos pedirle a la base de datos qué IDs tienen los productos de este usuario
         const { data: userProducts, error: fetchError } = await supabase
           .from("products")
           .select("id, code")
@@ -95,12 +103,14 @@ export default function CargarDatosPage() {
 
         if (fetchError) throw new Error(`Fallo al leer catálogo interno: ${fetchError.message}`);
         
-        const productMap = new Map<string, string>(userProducts?.map(p => [p.code, p.id]) || []);
+        const productMap = new Map<string, string>(
+          userProducts?.map(p => [String(p.code).trim(), p.id]) || []
+        );
 
         const movementsToInsert = dataMovements
-          .filter(item => productMap.has(item.code)) 
+          .filter(item => productMap.has(String(item.code).trim())) 
           .map(item => ({
-            product_id: productMap.get(item.code)!,
+            product_id: productMap.get(String(item.code).trim())!,
             user_id: user.id,
             type: item.type,
             transaction_code: item.transactionCode,
@@ -118,10 +128,9 @@ export default function CargarDatosPage() {
           .insert(movementsToInsert);
 
         if (insertError) throw new Error(`Fallo en Kardex: ${insertError.message}`);
-        mensajeExito += `[${movementsToInsert.length} movimientos añadidos al historial]`;
+        mensajeExito += `[${movementsToInsert.length} nuevos movimientos inyectados]`;
       }
 
-      // Éxito total: Limpiar memoria y mostrar mensaje
       setStatus({ type: "success", msg: mensajeExito });
       setDataStock([]);
       setDataMovements([]);
@@ -141,7 +150,7 @@ export default function CargarDatosPage() {
       
       <div className="border-b border-slate-100 pb-5">
         <h1 className="text-xl font-bold tracking-tight text-slate-950">Consola de Ingesta y Limpieza de Datos</h1>
-        <p className="text-xs text-slate-400 font-medium mt-1">Carga de archivos planos del ERP para el procesamiento y actualización del motor estadístico.</p>
+        <p className="text-xs text-slate-400 font-medium mt-1">Carga de archivos planos del ERP para el procesamiento y actualización del motor de inventario.</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -150,10 +159,10 @@ export default function CargarDatosPage() {
           <div>
             <div className="flex items-center gap-2 mb-2">
               <Box size={16} className="text-slate-600" />
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600">1. Reporte de Catálogo y Stock</h3>
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600">1. Reporte de Catálogo (Actualizar Stock y Costo)</h3>
             </div>
             <p className="text-[11px] text-slate-400 font-medium leading-relaxed mb-5">
-              Requerido para actualizar inventarios base y tiempos de reabastecimiento teóricos. <br />
+              Requerido para sobreescribir los inventarios base y costos actuales. <br />
               Columnas: <span className="font-mono text-slate-500 text-[10px]">CODIGO, DESCRIPCIÓN, STOCK, UND, LEAD_TIME, FAMILIA, COSTO</span>
             </p>
           </div>
@@ -161,7 +170,7 @@ export default function CargarDatosPage() {
           <label className="border border-dashed border-slate-300 hover:border-slate-900 bg-white p-5 rounded-lg text-center cursor-pointer block transition-colors group shadow-sm">
             <UploadCloud size={20} className="mx-auto text-slate-400 group-hover:text-slate-900 mb-2 transition-colors" />
             <span className="text-[11px] font-bold text-slate-600 group-hover:text-slate-900 transition-colors block">
-              {stockCount ? `✓ ${stockCount} filas en memoria` : "Subir archivo de Stock"}
+              {stockCount ? `✓ ${stockCount} SKUs validados` : "Subir archivo de Stock"}
             </span>
             <input type="file" accept=".xlsx, .xls, .csv" onChange={(e) => handleFileProcessing(e, "stock")} className="hidden" />
           </label>
@@ -172,10 +181,10 @@ export default function CargarDatosPage() {
           <div>
             <div className="flex items-center gap-2 mb-2">
               <FileSpreadsheet size={16} className="text-slate-600" />
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600">2. Kardex de Movimientos</h3>
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600">2. Kardex de Movimientos (Insertar Historial)</h3>
             </div>
             <p className="text-[11px] text-slate-400 font-medium leading-relaxed mb-5">
-              Historial de consumos e ingresos mensuales de la planta. <br />
+              Añade de forma incremental los nuevos consumos e ingresos mensuales. <br />
               Columnas: <span className="font-mono text-slate-500 text-[10px]">CT (NI/NS), TD, FECHA, CODIGO, DESCRIPCIÓN, CANTIDAD</span>
             </p>
           </div>
@@ -183,7 +192,7 @@ export default function CargarDatosPage() {
           <label className="border border-dashed border-slate-300 hover:border-slate-900 bg-white p-5 rounded-lg text-center cursor-pointer block transition-colors group shadow-sm">
             <UploadCloud size={20} className="mx-auto text-slate-400 group-hover:text-slate-900 mb-2 transition-colors" />
             <span className="text-[11px] font-bold text-slate-600 group-hover:text-slate-900 transition-colors block">
-              {movementsCount ? `✓ ${movementsCount} filas en memoria` : "Subir archivo de Movimientos"}
+              {movementsCount ? `✓ ${movementsCount} movimientos listos` : "Subir archivo de Movimientos"}
             </span>
             <input type="file" accept=".xlsx, .xls, .csv" onChange={(e) => handleFileProcessing(e, "movimientos")} className="hidden" />
           </label>
@@ -221,7 +230,7 @@ export default function CargarDatosPage() {
           {loading ? (
             <>
               <RefreshCw size={14} className="animate-spin" />
-              Sincronizando con Supabase...
+              Procesando base de datos...
             </>
           ) : (
             <>

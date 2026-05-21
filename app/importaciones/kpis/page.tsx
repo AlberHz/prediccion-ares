@@ -81,51 +81,77 @@ export default function GraficoPredictivoAresIA() {
     const leadTimeDias = parseInt(item.lead_time) || 0;
     const leadTimeMeses = leadTimeDias / 30;
 
+    // 1. EXTRAER TODAS LAS SALIDAS HISTÓRICAS (Materia prima consumida por producción)
     const todasLasSalidas = item.movimientos.filter((m: any) => {
       const tipoDoc = String(m.type || "").trim().toUpperCase();
       const codTrans = String(m.transaction_code || "").trim().toUpperCase();
       return DOCUMENTOS_SALIDA.includes(tipoDoc) || DOCUMENTOS_SALIDA.includes(codTrans);
     });
 
-    const historialPorMes: { [key: number]: number } = {};
-    for (let i = 0; i < 12; i++) historialPorMes[i] = 0;
+    // Mapeo completo de consumos sin importar el año para calcular la media real de la planta
+    const consumosMensualesLista: number[] = [];
+    const historialPorMesAnual: { [key: string]: number } = {};
 
     todasLasSalidas.forEach((m: any) => {
       const fechaObj = m.date ? new Date(m.date) : new Date(m.created_at);
-      if (fechaObj.getFullYear() === AÑO_ACTUAL) {
-        const mesNum = fechaObj.getMonth();
-        historialPorMes[mesNum] += Math.abs(Number(m.quantity || 0));
-      }
+      const año = fechaObj.getFullYear();
+      const mes = fechaObj.getMonth();
+      const llave = `${año}-${mes}`;
+      
+      if (!historialPorMesAnual[llave]) historialPorMesAnual[llave] = 0;
+      historialPorMesAnual[llave] += Math.abs(Number(m.quantity || 0));
     });
 
-    const mesesConDatos = [0, 1, 2, 3].map(m => historialPorMes[m]);
-    const sumaDatos = mesesConDatos.reduce((a, b) => a + b, 0);
-    const promedioNormal = sumaDatos > 0 ? (sumaDatos / 4) : 100;
+    // Agrupamos los valores de los meses activos para la varianza real
+    Object.keys(historialPorMesAnual).forEach(llave => {
+      consumosMensualesLista.push(historialPorMesAnual[llave]);
+    });
 
-    const varianza = mesesConDatos.reduce((sum, val) => sum + Math.pow(val - promedioNormal, 2), 0) / 3;
+    // 2. CORRECCIÓN MACRO: Promedio basado en el ciclo completo de la base de datos (Ej: 13 meses)
+    const totalMesesActivos = consumosMensualesLista.length || 1;
+    const sumaTotalUnidades = consumosMensualesLista.reduce((a, b) => a + b, 0);
+    const promedioNormal = sumaTotalUnidades > 0 ? (sumaTotalUnidades / totalMesesActivos) : 100;
+
+    // 3. VARIACIÓN REAL DE LA PLANTA (Refleja los picos de fabricación de lotes de puertas)
+    const varianza = consumosMensualesLista.reduce((sum, val) => sum + Math.pow(val - promedioNormal, 2), 0) / Math.max(1, totalMesesActivos - 1);
     const desviacionEstandar = Math.sqrt(varianza || 10);
 
-    let zScore = 0.84; 
-    let nivelClasificacion = "OPTIMISTA (EFICIENCIA DE STOCK)";
+    // 4. UNIFICACIÓN DE ESTRATEGIA CON TABLA PRINCIPAL (Asegurar Línea de Producción)
+    let zScore = 1.28; // Cambiado de 0.84 a 1.28 (90% Nivel de protección para no parar la planta)
+    let nivelClasificacion = "BLINDAJE DE STOCK (ARES FABRICA)";
 
-    const coeficientesEstacionalesPredeterminados = [
-      0.95, 0.90, 1.05, 1.00, 1.10, 1.02, 1.15, 1.18, 1.13, 1.12, 1.15, 1.10
-    ];
+    // Incremento comercial del +25% porque consumimos materia prima directo del volumen de puertas estimadas
+    const demandaConIncremento = promedioNormal * 1.25; 
 
-    const holguraEstadistica = promedioNormal * 1.15; // Ajustado al estándar del glosario (+15%)
+    // Amortiguador financiero al 25% máximo para no saturar el almacén de insumos voluminosos
     const factorVarianzaIA = zScore * desviacionEstandar;
-    const colchonMaximo = holguraEstadistica * 0.15;
-    const bufferAjustadoIA = factorVarianzaIA > colchonMaximo ? colchonMaximo : factorVarianzaIA;
-    const consumoBaseIA = holguraEstadistica + bufferAjustadoIA;
+    const colchonMaximoPermitido = demandaConIncremento * 0.25;
+    const bufferAjustadoIA = factorVarianzaIA > colchonMaximoPermitido ? colchonMaximoPermitido : factorVarianzaIA;
+    
+    // Consumo Predictivo Final idéntico al motor del backend
+    const consumoBaseIA = demandaConIncremento + bufferAjustadoIA;
 
-    // Cálculo matemático riguroso del escenario crítico (+35% de estrés comercial)
-    const consumoRiesgoCriticoIA = consumoBaseIA * 1.25;
+    // Escenario crítico de estrés de planta (+35% extra de pedidos concurrentes)
+    const consumoRiesgoCriticoIA = consumoBaseIA * 1.35;
 
     const tasaAumentoAbsoluto = consumoBaseIA - promedioNormal;
-    const probabilidadCumplimiento = promedioNormal > 0 ? Math.min(99.1, Math.max(85.0, 100 - (tasaAumentoAbsoluto / promedioNormal * 100))) : 0;
+    const probabilidadCumplimiento = 90.0; // Indexado al nivel de servicio Gaussiano de Z=1.28
 
     const totalArribosExclusivos = item.arribos.reduce((sum: number, a: any) => sum + Number(a.quantity || 0), 0);
-    const sugeridoCompra = consumoBaseIA > 0 ? (consumoBaseIA * leadTimeMeses) * 1.05 : 0;
+    
+    // 5. COMPRA SUGERIDA CON FACTOR DE MERMA (+15% para absorber desperdicios de cortes/mermas de taller)
+    const sugeridoCompra = consumoBaseIA > 0 ? (consumoBaseIA * leadTimeMeses) * 1.15 : 0;
+
+    // Preparación de datos para renderizar la gráfica mensualizada del 2026
+    const historialPorMes2026: { [key: number]: number } = {};
+    for (let i = 0; i < 12; i++) historialPorMes2026[i] = 0;
+    
+    todasLasSalidas.forEach((m: any) => {
+      const fechaObj = m.date ? new Date(m.date) : new Date(m.created_at);
+      if (fechaObj.getFullYear() === AÑO_ACTUAL) {
+        historialPorMes2026[fechaObj.getMonth()] += Math.abs(Number(m.quantity || 0));
+      }
+    });
 
     let invCorrienteNormal = stockFisicoActual;
     let invCorrienteEstadistico = stockFisicoActual;
@@ -135,7 +161,7 @@ export default function GraficoPredictivoAresIA() {
     let stockIterativoPasado = stockFisicoActual;
 
     for (let m = MES_ACTUAL_NUM - 1; m >= 0; m--) {
-      const salidasRealesMes = historialPorMes[m];
+      const salidasRealesMes = historialPorMes2026[m];
       stockIterativoPasado = stockIterativoPasado + salidasRealesMes;
       
       datosHistoricosInversos.unshift({
@@ -154,8 +180,9 @@ export default function GraficoPredictivoAresIA() {
     });
     const totalArribosMayo = arribosMayo.reduce((sum: number, curr: any) => sum + Number(curr.quantity || 0), 0);
     
-    const salidasMayoReal = historialPorMes[MES_ACTUAL_NUM];
-    const consumoMayo = salidasMayoReal > 0 ? salidasMayoReal : promedioNormal * coeficientesEstacionalesPredeterminados[MES_ACTUAL_NUM];
+    const salidasMayoReal = historialPorMes2026[MES_ACTUAL_NUM];
+    // Ajustado estacionalidad base sobre el nuevo consumo predictivo unificado
+    const consumoMayo = salidasMayoReal > 0 ? salidasMayoReal : consumoBaseIA;
 
     invCorrienteNormal += totalArribosMayo;
     invCorrienteEstadistico += totalArribosMayo;
@@ -174,14 +201,14 @@ export default function GraficoPredictivoAresIA() {
     invCorrienteEstadistico = Math.max(0, invCorrienteEstadistico - consumoMayo);
     invCorrienteRiesgo = Math.max(0, invCorrienteRiesgo - (consumoMayo * 1.35));
 
+    const coeficientesEstacionalesPredeterminados = [
+      0.95, 0.90, 1.05, 1.00, 1.10, 1.02, 1.15, 1.18, 1.13, 1.12, 1.15, 1.10
+    ];
+
     const datosFuturos: any[] = [];
     let yaQuebro = false;
     let mesQuiebreGrafico = "";
     let mesColocacionOcGrafico = "";
-
-    const obtenerRuidoSimulado = (mesIndex: number) => {
-      return Math.sin(mesIndex * 1.5) * (desviacionEstandar * 0.25);
-    };
 
     for (let m = MES_ACTUAL_NUM + 1; m <= 11; m++) {
       const arribosEsteMes = item.arribos.filter((a: any) => {
@@ -191,11 +218,11 @@ export default function GraficoPredictivoAresIA() {
       const entradasOC = arribosEsteMes.reduce((sum: number, curr: any) => sum + Number(curr.quantity || 0), 0);
 
       const factorEstacionalidad = coeficientesEstacionalesPredeterminados[m];
-      const ruido = obtenerRuidoSimulado(m);
 
-      const consumoNormalEstacional = Math.max(10, (promedioNormal * factorEstacionalidad) + ruido);
-      const consumoEstadisticoEstacional = Math.max(15, (consumoBaseIA * factorEstacionalidad) + ruido);
-      const consumoRiesgoEstacional = Math.max(20, (consumoRiesgoCriticoIA * factorEstacionalidad) + ruido);
+      // Las proyecciones futuras ahora se alimentan del consumo unificado ajustado por estacionalidad
+      const consumoNormalEstacional = promedioNormal * factorEstacionalidad;
+      const consumoEstadisticoEstacional = consumoBaseIA * factorEstacionalidad;
+      const consumoRiesgoEstacional = consumoRiesgoCriticoIA * factorEstacionalidad;
 
       invCorrienteNormal = invCorrienteNormal + entradasOC - consumoNormalEstacional;
       invCorrienteEstadistico = invCorrienteEstadistico + entradasOC - consumoEstadisticoEstacional;
@@ -247,7 +274,7 @@ export default function GraficoPredictivoAresIA() {
       pedidoSugerido: sugeridoCompra,
       enTránsito: totalArribosExclusivos,
       nivelClasificacion,
-      confianzaZ: "85%",
+      confianzaZ: "90%",
       proyeccionesPorMes
     };
   }, [productos, skuSeleccionadoId]);
@@ -261,7 +288,7 @@ export default function GraficoPredictivoAresIA() {
     <div className="min-h-[60vh] flex items-center justify-center bg-[#f8fafc]">
       <div className="text-center space-y-3">
         <div className="w-10 h-10 border-3 border-slate-900 border-t-transparent rounded-full animate-spin mx-auto"></div>
-        <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Calculando Simulación Predictiva Estocástica...</p>
+        <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Sincronizando Motores Predictivos de Planta...</p>
       </div>
     </div>
   );
@@ -274,7 +301,7 @@ export default function GraficoPredictivoAresIA() {
         <div className="flex items-center gap-2 mb-2">
           <div className="w-2 h-2 bg-indigo-600 rounded-full animate-pulse" />
           <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
-           Simulador de Demanda Estocástica Ares
+           Motor Sincronizado Materia Prima Ares 
           </label>
         </div>
         <div className="relative">
@@ -323,7 +350,7 @@ export default function GraficoPredictivoAresIA() {
           <div className="bg-white p-5 rounded-xl border border-slate-200/60 shadow-xs space-y-4">
             <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
               <BarChart3 className="text-slate-800" size={16} />
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900">Métricas de Control de Simulación</h3>
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900">Métricas Unificadas</h3>
             </div>
             
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
@@ -337,27 +364,26 @@ export default function GraficoPredictivoAresIA() {
 
               <div className="bg-slate-50 border border-slate-200/60 p-4 rounded-xl flex flex-col justify-between">
                 <div>
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide block">Media Histórica Salidas</span>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide block">Histórico Real (Total Ciclo)</span>
                   <p className="text-xl font-black text-slate-800 mt-1">{(Math.round(analisisSku.promedioNormal)).toLocaleString()} <span className="text-xs font-medium text-slate-500">un/mes</span></p>
                 </div>
-                <p className="text-[10px] text-slate-400 mt-2 border-t border-slate-200/50 pt-1.5">Comportamiento base real Ene - Abr.</p>
+                <p className="text-[10px] text-slate-400 mt-2 border-t border-slate-200/50 pt-1.5">Consumo promedio histórico medido en planta.</p>
               </div>
 
               <div className="bg-indigo-50/50 border border-indigo-100 p-4 rounded-xl flex flex-col justify-between">
                 <div>
-                  <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wide block">Consumo Estadístico Ajustado</span>
+                  <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wide block">Consumo Estadistico (+25%)</span>
                   <p className="text-xl font-black text-indigo-900 mt-1">{(Math.round(analisisSku.ajusteEstadistico)).toLocaleString()} <span className="text-xs font-medium text-indigo-500">un/mes</span></p>
                 </div>
-                <p className="text-[10px] text-indigo-600/80 mt-2 border-t border-indigo-200/30 pt-1.5 font-medium">Línea de tendencia suavizada y eficiente (+15%).</p>
+                <p className="text-[10px] text-indigo-600/80 mt-2 border-t border-indigo-200/30 pt-1.5 font-medium">Proyeccion agregando el(+25%) + 25% de stock Maximo .</p>
               </div>
 
-              {/* CORREGIDO: Título unificado a +35% acorde a las matemáticas reales del sistema */}
               <div className="bg-rose-50/50 border border-rose-100 p-4 rounded-xl flex flex-col justify-between">
                 <div>
-                  <span className="text-[10px] font-bold text-rose-600 uppercase tracking-wide block">Consumo Escenario de Estrés (+25%)</span>
+                  <span className="text-[10px] font-bold text-rose-600 uppercase tracking-wide block">Escenario Crítico (+35%)</span>
                   <p className="text-xl font-black text-rose-900 mt-1">{(Math.round(analisisSku.promedioRiesgoMaximo)).toLocaleString()} <span className="text-xs font-medium text-slate-500">un/mes</span></p>
                 </div>
-                <p className="text-[10px] text-rose-600/80 mt-2 border-t border-rose-200/30 pt-1.5 font-medium">Límite superior simulado ante picos del mercado.</p>
+                <p className="text-[10px] text-rose-600/80 mt-2 border-t border-rose-200/30 pt-1.5 font-medium">Límite superior simulado ante picos de órdenes.</p>
               </div>
             </div>
           </div>
@@ -367,7 +393,7 @@ export default function GraficoPredictivoAresIA() {
             <div className="bg-white p-4 rounded-xl border border-slate-200/60 shadow-xs flex items-center gap-3.5">
               <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-lg"><Percent size={15} /></div>
               <div>
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Logística de Flujo</span>
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Nivel de Cobertura</span>
                 <p className="text-xs font-black text-slate-900 truncate max-w-[140px]">{analisisSku.nivelClasificacion}</p>
               </div>
             </div>
@@ -375,7 +401,7 @@ export default function GraficoPredictivoAresIA() {
             <div className="bg-white p-4 rounded-xl border border-slate-200/60 shadow-xs flex items-center gap-3.5">
               <div className="p-2.5 bg-amber-50 text-amber-600 rounded-lg"><ArrowUpRight size={15} /></div>
               <div>
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Holgura Mínima</span>
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Colchón Concedido</span>
                 <p className="text-xs font-black text-slate-900">+{Math.round(analisisSku.tasaAumentoAbsoluto).toLocaleString()} un.</p>
               </div>
             </div>
@@ -393,7 +419,7 @@ export default function GraficoPredictivoAresIA() {
             <div className="bg-slate-900 p-4 rounded-xl shadow-xs flex items-center gap-3.5 text-white">
               <div className="p-2.5 bg-slate-800 text-indigo-400 rounded-lg"><Sparkles size={15} /></div>
               <div>
-                <span className="text-[9px] font-bold text-indigo-400 uppercase tracking-wider block">Pedido Ajustado Sugerido</span>
+                <span className="text-[9px] font-bold text-indigo-400 uppercase tracking-wider block">Pedido Sugerido (+Merma)</span>
                 <p className="text-xs font-black text-white">{Math.round(analisisSku.pedidoSugerido).toLocaleString()} un.</p>
               </div>
             </div>
@@ -404,7 +430,7 @@ export default function GraficoPredictivoAresIA() {
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-slate-100 pb-4 gap-2">
               <div className="flex items-center gap-2 text-xs font-black text-slate-900 uppercase tracking-wider">
                 <ChartIcon size={14} className="text-indigo-600" />
-                <span>Simulador Dinámico: Capas de Inventario vs Demandas Mensualizadas Variables</span>
+                <span>Simulador Unificado: Inventarios Reales vs Demanda Industrial Sincronizada</span>
               </div>
             </div>
 
@@ -430,11 +456,11 @@ export default function GraficoPredictivoAresIA() {
                   />
                   <Legend verticalAlign="top" height={36} iconType="circle" iconSize={8} wrapperStyle={{ fontSize: '11px', fontWeight: 'bold' }} />
                   
-                  <Bar yAxisId="right" dataKey="Consumo Mensual" fill="#cbd5e1" maxBarSize={32} radius={[4, 4, 0, 0]} opacity={0.7} name="Salidas / Consumo Proyectado Variable" />
+                  <Bar yAxisId="right" dataKey="Consumo Mensual" fill="#cbd5e1" maxBarSize={32} radius={[4, 4, 0, 0]} opacity={0.7} name="Consumo Proyectado Planta (Sincronizado)" />
 
-                  <Line yAxisId="left" type="monotone" dataKey="Stock de Riesgo (Máx)" stroke="#f43f5e" strokeWidth={1.5} strokeDasharray="4 4" dot={false} name="Trayectoria con Escenario de Estrés (+35%)" />
+                  <Line yAxisId="left" type="monotone" dataKey="Stock de Riesgo (Máx)" stroke="#f43f5e" strokeWidth={1.5} strokeDasharray="4 4" dot={false} name="Trayectoria con Estrés Industrial (+35%)" />
                   <Line yAxisId="left" type="monotone" dataKey="Stock Normal" stroke="#64748b" strokeWidth={1.5} strokeDasharray="6 2" dot={false} name="Trayectoria Lineal Base" />
-                  <Area yAxisId="left" type="monotone" dataKey="Stock Estadístico" stroke="#4f46e5" strokeWidth={3} fillOpacity={1} fill="url(#gradientEstadistico)" name="Trayectoria Estadística Predictiva ARES" dot={{ r: 2 }} />
+                  <Area yAxisId="left" type="monotone" dataKey="Stock Estadístico" stroke="#4f46e5" strokeWidth={3} fillOpacity={1} fill="url(#gradientEstadistico)" name="Trayectoria Predictiva ARES IA" dot={{ r: 2 }} />
 
                   {analisisSku.mesColocacionOcGrafico && (
                     <ReferenceLine yAxisId="left" x={analisisSku.mesColocacionOcGrafico} stroke="#d97706" strokeWidth={1.5}>
@@ -458,6 +484,7 @@ export default function GraficoPredictivoAresIA() {
                             fill="#047857" 
                             fontSize={9} 
                             fontWeight="bold" 
+                            type="shared"
                           />
                         </ReferenceLine>
                       );
@@ -467,102 +494,6 @@ export default function GraficoPredictivoAresIA() {
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
-
-            <div className="mt-4 space-y-4">
-              {/* NOTA DE CONCILIACIÓN */}
-              <div className="bg-slate-50 p-4 rounded-xl text-[11px] text-slate-600 font-medium border border-slate-200 shadow-sm">
-                <div className="flex items-start gap-2.5">
-                  <CheckCircle size={15} className="text-emerald-600 shrink-0 mt-0.5" />
-                  <div className="space-y-2">
-                    <span className="block text-slate-900 font-bold uppercase tracking-wider text-[10px]">
-                      🔄 Nota de Conciliación de Modelos ARES (Estrategia de Inventario)
-                    </span>
-                    <p className="leading-relaxed">
-                      <strong>Gráfico Analítico (Simulación Just-in-Time):</strong> Este entorno gráfico está configurado para la optimización fina del flujo de caja. Reduce deliberadamente el factor de varianza aleatoria y la holgura logística en un <strong>50%</strong> (operando con un nivel de protección del 85%, Z = 0.84 y amortiguación estricta del 15%). Esto modela un escenario de mercado fluido para minimizar el capital inmovilizado en almacén.
-                    </p>
-                    <p className="leading-relaxed border-t border-slate-200/60 pt-2 text-slate-500">
-                      <strong>Diferencia con la Tabla Principal (Blindaje de Stock):</strong> La tabla principal actúa como un escudo operativo preventivo. Utiliza un factor probabilístico severo del <strong>90% de confianza (Z = 1.28)</strong>, inyecta un incremento comercial plano exigido del <strong>+25%</strong> sobre la demanda base, permite amortiguar hasta un 25% máximo y añade un <strong>+15% de holgura final en la OC</strong>. Por ello, la tabla siempre sugerirá volúmenes de compra más altos orientados a evitar el quiebre.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* LEYENDA TÉCNICA */}
-              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-                <span className="block text-slate-400 font-bold uppercase tracking-wider text-[9px] mb-3">
-                  📊 GLOSARIO ESTADÍSTICO Y FÓRMULAS DE CÁLCULO MÓDULO GRÁFICO
-                </span>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-[11px] text-slate-600">
-                  <div className="bg-slate-50/50 p-2.5 rounded-lg border border-slate-100">
-                    <div className="flex items-center gap-1.5 font-bold text-slate-800 mb-1">
-                      <span className="w-2.5 h-2.5 rounded-full bg-[#cbd5e1]"></span>
-                      Promedio Normal Histórico
-                    </div>
-                    <p className="text-slate-500 leading-relaxed mb-1.5">
-                      Demanda lineal pura basada en el comportamiento histórico real de salidas sin distorsiones comerciales.
-                    </p>
-                    <code className="block bg-slate-900 text-slate-200 p-1.5 rounded font-mono text-[10px] text-center">
-                      Promedio = ∑ Unidades / Meses Activos
-                    </code>
-                  </div>
-
-                  <div className="bg-slate-50/50 p-2.5 rounded-lg border border-slate-100">
-                    <div className="flex items-center gap-1.5 font-bold text-slate-800 mb-1">
-                      <span className="w-2.5 h-2.5 rounded-full bg-[#3b82f6]"></span>
-                      Promedio Estadístico Ajustado
-                    </div>
-                    <p className="text-slate-500 leading-relaxed mb-1.5">
-                      Base analítica estabilizada del gráfico que incorpora un buffer de aumento inicial del +15%.
-                    </p>
-                    <code className="block bg-slate-900 text-slate-200 p-1.5 rounded font-mono text-[10px] text-center">
-                      Demanda Base = Promedio Real × 1.15
-                    </code>
-                  </div>
-
-                  {/* CORREGIDO: Consistencia absoluta con el 35% requerido */}
-                  <div className="bg-slate-50/50 p-2.5 rounded-lg border border-slate-100">
-                    <div className="flex items-center gap-1.5 font-bold text-slate-800 mb-1">
-                      <span className="w-2.5 h-2.5 rounded-full bg-[#ef4444]"></span>
-                      Promedio Riesgo Crítico
-                    </div>
-                    <p className="text-slate-500 leading-relaxed mb-1.5">
-                      Modelo de estrés para escenarios de alta volatilidad o picos imprevistos del mercado (+25%).
-                    </p>
-                    <code className="block bg-slate-900 text-slate-200 p-1.5 rounded font-mono text-[10px] text-center">
-                      Estrés = Promedio Ajustado × 1.25
-                    </code>
-                  </div>
-
-                  <div className="bg-slate-50/50 p-2.5 rounded-lg border border-slate-100">
-                    <div className="flex items-center gap-1.5 font-bold text-slate-800 mb-1">
-                      <span className="w-2.5 h-2.5 rounded-full bg-[#10b981]"></span>
-                      Nivel de Estabilidad (Confianza)
-                    </div>
-                    <p className="text-slate-500 leading-relaxed mb-1.5">
-                      Probabilidad Gaussiana controlada para absorción de varianza aleatoria (Z-Score = 0.84).
-                    </p>
-                    <code className="block bg-slate-900 text-slate-200 p-1.5 rounded font-mono text-[9px] text-center whitespace-pre overflow-x-auto">
-                      σ = √[ ∑(Xi - X̄)² / (n - 1) ]
-                    </code>
-                  </div>
-
-                  <div className="bg-slate-50/50 p-2.5 rounded-lg border border-slate-100 md:col-span-2 lg:col-span-2">
-                    <div className="flex items-center gap-1.5 font-bold text-slate-800 mb-1">
-                      <span className="w-2.5 h-2.5 rounded-full bg-[#a855f7]"></span>
-                      Compra Sugerida (Algoritmo JIT del Gráfico)
-                    </div>
-                    <p className="text-slate-500 leading-relaxed mb-1.5">
-                      Cálculo dinámico de reposición basado en la tasa de consumo predictivo amortiguado según el tránsito logístico, aplicando una holgura técnica optimizada del 5%.
-                    </p>
-                    <code className="block bg-slate-900 text-slate-200 p-1.5 rounded font-mono text-[10px] text-center">
-                      Sugerido OC = (Consumo IA × [Lead Time / 30]) × 1.05
-                    </code>
-                  </div>
-                </div>
-              </div>
-            </div>
-
           </div>
         </>
       ) : (
