@@ -86,7 +86,7 @@ export default function ModuloPredicciones() {
     } catch (err) {
       console.error("Error sincronizando base de datos Ares:", err);
     } finally {
-      setLoading(false);
+      loading && setLoading(false);
     }
   }
 
@@ -249,6 +249,28 @@ export default function ModuloPredicciones() {
       });
   }, [productos, search, filtroEstado, filtroFamilia, mesesHeaders, mostrarOcultos]);
 
+  // --- CÁLCULO DE RESÚMENES AGRUPADOS PARA JEFATURA ---
+  const resumenMétricas = useMemo(() => {
+    const totalItems = dataProcesada.length;
+    if (totalItems === 0) return { stockTotal: 0, arribosTotal: 0, sugeridoTotal: 0, promedioConsumoIA: 0, promedioCobertura: 0 };
+
+    const stockTotal = dataProcesada.reduce((sum, item) => sum + item.stockFisico, 0);
+    const arribosTotal = dataProcesada.reduce((sum, item) => sum + item.enTránsito, 0);
+    const sugeridoTotal = dataProcesada.reduce((sum, item) => sum + item.pedidoSugerido, 0);
+
+    // Promedios correctos (No sumas de ratios)
+    const promedioConsumoIA = dataProcesada.reduce((sum, item) => sum + item.consumoIA, 0) / totalItems;
+    const promedioCobertura = dataProcesada.reduce((sum, item) => sum + item.coberturaMeses, 0) / totalItems;
+
+    return {
+      stockTotal,
+      arribosTotal,
+      sugeridoTotal,
+      promedioConsumoIA,
+      promedioCobertura
+    };
+  }, [dataProcesada]);
+
   const familiasUnicas = useMemo(() => {
     return Array.from(new Set(productos.map(p => p.family).filter(Boolean)));
   }, [productos]);
@@ -326,6 +348,39 @@ export default function ModuloPredicciones() {
               <option value="POR REVISAR">⚠️ POR REVISAR</option>
               <option value="STOCK OK">✅ STOCK OK</option>
             </select>
+          </div>
+        </div>
+
+        {/* 📊 SECCIÓN DE VISTA AGRUPADA (RESUMEN EJECUTIVO PARA JEFATURA) */}
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+          <div className="bg-slate-900 text-white p-4 rounded-xl border border-slate-800 shadow-sm">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Stock Físico Consolidado</p>
+            <p className="text-xl font-black mt-1 text-slate-100">{resumenMétricas.stockTotal.toLocaleString()} <span className="text-[10px] font-normal text-slate-400">unidades</span></p>
+            <p className="text-[9px] text-slate-500 mt-0.5">Suma total del grupo filtrado</p>
+          </div>
+
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider text-blue-600">Arribos en Tránsito Total</p>
+            <p className="text-xl font-black mt-1 text-blue-900">{resumenMétricas.arribosTotal.toLocaleString()} <span className="text-[10px] font-normal text-slate-400">unidades</span></p>
+            <p className="text-[9px] text-slate-400 mt-0.5">Suma de órdenes pendientes</p>
+          </div>
+
+          <div className="bg-purple-50 p-4 rounded-xl border border-purple-200 shadow-sm">
+            <p className="text-[10px] font-bold text-purple-500 uppercase tracking-wider">Promedio Consumo IA (Familia)</p>
+            <p className="text-xl font-black mt-1 text-purple-900">{Math.round(resumenMétricas.promedioConsumoIA).toLocaleString()} <span className="text-[10px] font-normal text-purple-500">u/m promedio</span></p>
+            <p className="text-[9px] text-purple-400 mt-0.5">Media del modelo predictivo por SKU</p>
+          </div>
+
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Cobertura Promedio</p>
+            <p className="text-xl font-black mt-1 text-slate-900">{resumenMétricas.promedioCobertura.toFixed(1)} <span className="text-[10px] font-normal text-slate-400">Meses</span></p>
+            <p className="text-[9px] text-slate-400 mt-0.5">Meses de amparo promedio del grupo</p>
+          </div>
+
+          <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-200 shadow-sm">
+            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Total Sugerido Compra (OC)</p>
+            <p className="text-xl font-black mt-1 text-emerald-900">{Math.round(resumenMétricas.sugeridoTotal).toLocaleString()} <span className="text-[10px] font-normal text-emerald-500">unidades</span></p>
+            <p className="text-[9px] text-emerald-400 mt-0.5">Monto total sugerido a colocar</p>
           </div>
         </div>
 
