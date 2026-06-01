@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
-import { Search, LineChart as ChartIcon, ShieldAlert, BarChart3, Eye, Filter, ListFilter, Calendar } from "lucide-react";
+import { Search, LineChart as ChartIcon, ShieldAlert, BarChart3, Eye, ListFilter } from "lucide-react";
 import { 
   ResponsiveContainer, ComposedChart, Area, Line, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine, Label 
@@ -114,9 +114,8 @@ export default function GraficoPredictivoAresIA() {
     const totalMesesActivos = valoresConsumo.length || 1;
     const sumaTotalUnidades = valoresConsumo.reduce((a, b) => a + b, 0);
     
-    // 2. CONFIGURACIÓN DE LOS 3 TIPOS DE CONSUMO MENSUALES BASE
+    // Configuración de tasas base
     const consumoNormal = sumaTotalUnidades > 0 ? (sumaTotalUnidades / totalMesesActivos) : 100;
-    
     const varianza = valoresConsumo.reduce((sum, val) => sum + Math.pow(val - consumoNormal, 2), 0) / Math.max(1, totalMesesActivos - 1);
     const desviacionEstandar = Math.sqrt(varianza || 10);
     const demandaConIncremento = consumoNormal * 1.25; 
@@ -133,7 +132,7 @@ export default function GraficoPredictivoAresIA() {
       }
     });
 
-    // 3. SIMULACIÓN DE HITOS E INVERSA DE COMPRAS POR ESCENARIOS
+    // 2. SIMULACIÓN DE HITOS LOGÍSTICOS DE ABASTECIMIENTO
     const calcularHitosEscenario = (tasaConsumoBase: number) => {
       let inventarioSimulado = stockFisicoActual;
       let yaQuebro = false;
@@ -141,24 +140,26 @@ export default function GraficoPredictivoAresIA() {
       let mesOC = "AL DÍA";
       const coeficientesEstacionales = [0.95, 0.90, 1.05, 1.00, 1.10, 1.02, 1.15, 1.18, 1.13, 1.12, 1.15, 1.10];
 
-      for (let t = 0; t < 16; t++) {
-        const indiceMes = (MES_ACTUAL_NUM + t) % 12;
-        const añoSimulado = AÑO_ACTUAL + Math.floor((MES_ACTUAL_NUM + t) / 12);
-        const ingresosOC = añoSimulado === 2026 ? (arribosRealesPorMes[indiceMes] || 0) : 0;
+      // Simular solo los meses restantes del año 2026 para el horizonte visual solicitado
+      const mesesRestantesAño = 12 - MES_ACTUAL_NUM;
+
+      for (let t = 0; t < mesesRestantesAño; t++) {
+        const indiceMes = MES_ACTUAL_NUM + t;
+        const ingresosOC = arribosRealesPorMes[indiceMes] || 0;
         
         inventarioSimulado = inventarioSimulado + ingresosOC - (tasaConsumoBase * coeficientesEstacionales[indiceMes]);
 
         if (inventarioSimulado <= 0 && !yaQuebro) {
-          mesQuiebre = `${NOMBRES_MESES[indiceMes]} ${añoSimulado === 2026 ? "26" : "27"}`;
+          mesQuiebre = `${NOMBRES_MESES[indiceMes]} 26`;
           
           const tiempoCompraEstratégica = t - mesesLeadTime;
-          const idxOC = (MES_ACTUAL_NUM + tiempoCompraEstratégica) % 12;
-          const añoOC = AÑO_ACTUAL + Math.floor((MES_ACTUAL_NUM + tiempoCompraEstratégica) / 12);
+          const idxOC = MES_ACTUAL_NUM + tiempoCompraEstratégica;
           
-          const idxOCNormalizado = idxOC >= 0 ? idxOC : 12 + idxOC;
-          const añoOCNormalizado = idxOC >= 0 ? añoOC : añoOC - 1;
-
-          mesOC = `${NOMBRES_MESES[idxOCNormalizado]} ${añoOCNormalizado === 2026 ? "26" : "27"}`;
+          if (idxOC >= 0) {
+            mesOC = `${NOMBRES_MESES[idxOC]} 26`;
+          } else {
+            mesOC = "RETRASADO";
+          }
           yaQuebro = true;
         }
       }
@@ -171,7 +172,7 @@ export default function GraficoPredictivoAresIA() {
     const hitoAresIA = calcularHitosEscenario(consumoAresIA);
     const hitoEstres = calcularHitosEscenario(consumoEstres);
 
-    // 4. ESTRUCTURA CRONOLÓGICA CON PASADO HISTÓRICO CONGELADO
+    // 3. CONSTRUCCIÓN DE LA LÍNEA DE TIEMPO DEL GRÁFICO (ACOTADO ESTRICTAMENTE HASTA DICIEMBRE 2026)
     const salidasPorMesAñoActual: Record<number, number> = {};
     todasLasSalidas.forEach((m: any) => {
       const f = m.date ? new Date(m.date) : new Date(m.created_at);
@@ -183,7 +184,7 @@ export default function GraficoPredictivoAresIA() {
     const datosCronologicosGrafico: any[] = [];
     let stockIterativoPasado = stockFisicoActual;
 
-    // PASADO: Consumo Real Fijo (Inalterable)
+    // Pasado (Ene 2026 - May 2026): Barras fijas e inalterables
     for (let m = MES_ACTUAL_NUM - 1; m >= 0; m--) {
       const salidasReales = salidasPorMesAñoActual[m] || 0;
       stockIterativoPasado += salidasReales;
@@ -197,18 +198,16 @@ export default function GraficoPredictivoAresIA() {
       });
     }
 
-    // FUTURO: Proyecciones de las curvas e impacto estacional en barras
+    // Futuro (Jun 2026 - Dic 2026): Solo meses pertenecientes al ciclo fiscal 2026
     let invCorrienteNormal = stockFisicoActual;
     let invCorrienteEstadistico = stockFisicoActual;
     let invCorrienteRiesgo = stockFisicoActual;
     const coeficientesEstacionales = [0.95, 0.90, 1.05, 1.00, 1.10, 1.02, 1.15, 1.18, 1.13, 1.12, 1.15, 1.10];
 
-    for (let t = 0; t < 16; t++) {
-      const indiceMesAbsoluto = (MES_ACTUAL_NUM + t) % 12;
-      const añoSimulado = AÑO_ACTUAL + Math.floor((MES_ACTUAL_NUM + t) / 12);
-      const etiquetaMesAnual = `${NOMBRES_MESES[indiceMesAbsoluto]} ${añoSimulado === 2026 ? "26" : "27"}`;
-      const ingresosOC = añoSimulado === 2026 ? (arribosRealesPorMes[indiceMesAbsoluto] || 0) : 0;
-      const factorEstacional = coeficientesEstacionales[indiceMesAbsoluto];
+    for (let m = MES_ACTUAL_NUM; m < 12; m++) {
+      const etiquetaMesAnual = `${NOMBRES_MESES[m]} 26`;
+      const ingresosOC = arribosRealesPorMes[m] || 0;
+      const factorEstacional = coeficientesEstacionales[m];
 
       invCorrienteNormal = invCorrienteNormal + ingresosOC - (consumoNormal * factorEstacional);
       invCorrienteEstadistico = invCorrienteEstadistico + ingresosOC - (consumoAresIA * factorEstacional);
@@ -244,7 +243,7 @@ export default function GraficoPredictivoAresIA() {
     };
   }, [productos, skuSeleccionadoId, escenarioVisual]);
 
-  // Filtro Inteligente Ajustado (Sin inicialización forzada por defecto)
+  // Filtro Maestro: Búsqueda dinámica reactiva (Limpio por defecto)
   const productosFiltrados = useMemo(() => {
     if (!busqueda.trim() && familiaSeleccionada === "TODAS") return [];
     return productos.filter(p => {
@@ -273,7 +272,7 @@ export default function GraficoPredictivoAresIA() {
           
           {/* Caja de Búsqueda de Texto Libre */}
           <div className="md:col-span-8 relative">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-1">Buscador de Códigos</label>
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-1">Buscador de Materiales</label>
             <div className="relative">
               <Search className="absolute left-3 top-2.5 text-slate-400" size={14} />
               <input
@@ -357,17 +356,17 @@ export default function GraficoPredictivoAresIA() {
               <div className="bg-slate-50 border border-slate-200/60 p-3 rounded-xl">
                 <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide block">1. Promedio Comercial</span>
                 <p className="text-lg font-black text-slate-800 mt-0.5">{Math.round(analisisSku.consumoNormal).toLocaleString()} <span className="text-xs font-medium text-slate-500">un/mes</span></p>
-                <p className="text-[9px] text-slate-400 mt-1">Histórico de Salidas.</p>
+                <p className="text-[9px] text-slate-400 mt-1">Histórico lineal sin protecciones.</p>
               </div>
 
               <div className="bg-purple-50/50 border border-purple-100 p-3 rounded-xl">
-                <span className="text-[9px] font-bold text-purple-600 uppercase tracking-wide block">2. Promedio Estadistico Ajustado (25% demanda con Tope Max de 25%)</span>
+                <span className="text-[9px] font-bold text-purple-600 uppercase tracking-wide block">2. PROMEDIO ESTADÍSTICO</span>
                 <p className="text-lg font-black text-purple-900 mt-0.5">{Math.round(analisisSku.consumoAresIA).toLocaleString()} <span className="text-xs font-medium text-purple-500">un/mes</span></p>
                 <p className="text-[9px] text-purple-600/80 mt-1">Línea base sugerida con colchón.</p>
               </div>
 
               <div className="bg-rose-50/50 border border-rose-100 p-3 rounded-xl">
-                <span className="text-[9px] font-bold text-rose-600 uppercase tracking-wide block">3. Promedio Maximo segun Demanda muy Variable</span>
+                <span className="text-[9px] font-bold text-rose-600 uppercase tracking-wide block">3. PROMEDIO MAX</span>
                 <p className="text-lg font-black text-rose-900 mt-0.5">{Math.round(analisisSku.consumoEstres).toLocaleString()} <span className="text-xs font-medium text-slate-500">un/mes</span></p>
                 <p className="text-[9px] text-rose-600/80 mt-1">Simulación ante picos (+35%).</p>
               </div>
@@ -379,7 +378,7 @@ export default function GraficoPredictivoAresIA() {
             <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
               <ShieldAlert size={14} className="text-purple-600" />
               <h4 className="text-xs font-black uppercase tracking-wider text-slate-900">
-                Matriz de Planificación por Escenarios
+                Matriz de Planificación Inversa y Abastecimiento por Escenarios (Periodo Fiscal 2026)
               </h4>
             </div>
 
@@ -413,7 +412,7 @@ export default function GraficoPredictivoAresIA() {
                 <div className="absolute top-0 right-0 bg-purple-600 text-white font-black text-[7px] px-2 py-0.5 rounded-bl uppercase tracking-widest"></div>
                 <div>
                   <div className="flex justify-between items-center">
-                    <span className="text-[10px] font-black text-purple-700 uppercase">2. Trayectoria Estadística</span>
+                    <span className="text-[10px] font-black text-purple-700 uppercase">2. TRAYECTORIA ESTADISTICA</span>
                     <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-100 text-purple-700">Recomendado</span>
                   </div>
                   <div className="grid grid-cols-2 gap-2 mt-2.5 text-[11px]">
@@ -437,7 +436,7 @@ export default function GraficoPredictivoAresIA() {
               <div className="border border-rose-200 rounded-lg p-3 bg-rose-50/30 flex flex-col justify-between">
                 <div>
                   <div className="flex justify-between items-center">
-                    <span className="text-[10px] font-black text-rose-700 uppercase">3. TRAYECTORIA MAX (+35%)</span>
+                    <span className="text-[10px] font-black text-rose-700 uppercase">3. TRAYECTORIA DEMANDA MAX (+35%)</span>
                     <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700">Saturación</span>
                   </div>
                   <div className="grid grid-cols-2 gap-2 mt-2.5 text-[11px]">
@@ -464,7 +463,7 @@ export default function GraficoPredictivoAresIA() {
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-slate-100 pb-3 gap-2 text-[11px]">
               <div className="flex items-center gap-2 font-black text-slate-900 uppercase">
                 <ChartIcon size={14} className="text-purple-600" />
-                <span>Proyección FUTRA vs Historial Real</span>
+                <span>TRAYECTORIA PredictivA vs Historial</span>
               </div>
               
               <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded border border-slate-200 font-black text-[10px]">
@@ -479,13 +478,13 @@ export default function GraficoPredictivoAresIA() {
                   onClick={() => setEscenarioVisual("ESTADISTICO")}
                   className={`px-2.5 py-0.5 rounded text-[9px] transition-all ${escenarioVisual === "ESTADISTICO" ? "bg-purple-600 text-white shadow-xs" : "text-slate-500"}`}
                 >
-                  ARES IA
+                  ESTADÍSTICO
                 </button>
                 <button 
                   onClick={() => setEscenarioVisual("CRITICO")}
                   className={`px-2.5 py-0.5 rounded text-[9px] transition-all ${escenarioVisual === "CRITICO" ? "bg-rose-600 text-white shadow-xs" : "text-slate-500"}`}
                 >
-                  ESTRÉS
+                  DEMANDA MAX
                 </button>
               </div>
             </div>
@@ -512,22 +511,22 @@ export default function GraficoPredictivoAresIA() {
                   />
                   <Legend verticalAlign="top" height={32} iconType="circle" iconSize={6} wrapperStyle={{ fontSize: '10px', fontWeight: 'black' }} />
                   
-                  {/* Barras de Consumo: Histórico inalterado en el pasado, variables solo a futuro */}
-                  <Bar yAxisId="right" dataKey="Consumo Visual" fill="#94a3b8" maxBarSize={24} radius={[3, 3, 0, 0]} opacity={0.4} name="Tasa de Salidas (Historial Fijo / Simulación Futura)" />
+                  {/* Barras de Consumo: Historial inalterado en el pasado, variables solo a futuro */}
+                  <Bar yAxisId="right" dataKey="Consumo Visual" fill="#94a3b8" maxBarSize={24} radius={[3, 3, 0, 0]} opacity={0.4} name="Promedio" />
 
-                  <Line yAxisId="left" type="monotone" dataKey="Stock de Riesgo (Máx)" stroke="#f43f5e" strokeWidth={1.2} strokeDasharray="4 4" dot={false} name="Trayectoria con Estrés (+35%)" />
+                  <Line yAxisId="left" type="monotone" dataKey="Stock de Riesgo (Máx)" stroke="#f43f5e" strokeWidth={1.2} strokeDasharray="4 4" dot={false} name="Trayectoria MAX (+35%)" />
                   <Line yAxisId="left" type="monotone" dataKey="Stock Normal" stroke="#64748b" strokeWidth={1.2} strokeDasharray="5 2" dot={false} name="Trayectoria Lineal Base" />
-                  <Area yAxisId="left" type="monotone" dataKey="Stock Estadístico (Ares IA)" stroke="#4f46e5" strokeWidth={2.5} fillOpacity={1} fill="url(#gradientEstadistico)" name="Curva Predictiva ARES IA" dot={{ r: 1.5 }} />
+                  <Area yAxisId="left" type="monotone" dataKey="Stock Estadístico (Ares IA)" stroke="#4f46e5" strokeWidth={2.5} fillOpacity={1} fill="url(#gradientEstadistico)" name="Curva Predictiva" dot={{ r: 1.5 }} />
 
-                  {/* LÍNEA GUÍA: CALENDARIO EXACTO DE COLOCACIÓN DE ORDEN DE COMPRA */}
-                  {analisisSku.hitoGraficoActivo.mesOC !== "AL DÍA" && (
+                  {/* LÍNEA GUÍA: CALENDARIO EXACTO DE COLOCACIÓN DE ORDEN DE COMPRA (SI CAE EN EL HORIZONTE DE 2026) */}
+                  {analisisSku.hitoGraficoActivo.mesOC !== "AL DÍA" && analisisSku.hitoGraficoActivo.mesOC !== "RETRASADO" && analisisSku.hitoGraficoActivo.mesOC.includes("26") && (
                     <ReferenceLine yAxisId="left" x={analisisSku.hitoGraficoActivo.mesOC} stroke="#d97706" strokeWidth={2} strokeDasharray="4 3">
                       <Label value={`COLOCAR OC: ${analisisSku.hitoGraficoActivo.mesOC}`} position="top" fill="#b45309" fontSize={8} fontWeight="black" />
                     </ReferenceLine>
                   )}
 
                   {/* LÍNEA GUÍA: PUNTO ESTIMADO DE QUIEBRE */}
-                  {analisisSku.hitoGraficoActivo.mesQuiebre !== "OPERATIVO" && (
+                  {analisisSku.hitoGraficoActivo.mesQuiebre !== "OPERATIVO" && analisisSku.hitoGraficoActivo.mesQuiebre.includes("26") && (
                     <ReferenceLine yAxisId="left" x={analisisSku.hitoGraficoActivo.mesQuiebre} stroke="#ef4444" strokeWidth={2}>
                       <Label value={`QUIEBRE STOCK: ${analisisSku.hitoGraficoActivo.mesQuiebre}`} position="top" fill="#ef4444" fontSize={8} fontWeight="black" />
                     </ReferenceLine>
