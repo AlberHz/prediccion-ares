@@ -1,13 +1,16 @@
 "use client";
-import { useRouter } from "next/navigation";
+import Link from "next/link"; // Usamos Link para navegación instantánea sin recargas
 import { motion } from "framer-motion";
+import { useGlobalData } from "@/lib/DataContext"; // Validamos el estado global
 import { 
   BrainCircuit, Truck, BarChart3, Clock, 
-  CloudUpload, ArrowRight, Activity, DollarSign 
+  CloudUpload, ArrowRight, Activity 
 } from "lucide-react";
 
+const MotionLink = motion(Link);
 export default function LaunchpadPage() {
-  const router = useRouter();
+  // Consumimos el contexto global. Al estar mapeado aquí, Next.js mantiene viva la memoria
+  const { productos, loading } = useGlobalData();
 
   const modules = [
     {
@@ -55,49 +58,57 @@ export default function LaunchpadPage() {
       <div className="max-w-5xl mx-auto w-full space-y-10">
         
         {/* ENCABEZADO DE BIENVENIDA */}
-        <div className="space-y-2 border-b border-slate-100 pb-6">
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-            Panel de Operaciones
-          </h1>
-          <p className="text-xs text-slate-500 font-medium">
-            Selecciona un módulo
-          </p>
+        <div className="space-y-2 border-b border-slate-100 pb-6 flex justify-between items-end">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+              Panel de Operaciones
+            </h1>
+            <p className="text-xs text-slate-500 font-medium">
+              Selecciona un módulo para trabajar
+            </p>
+          </div>
+          
+          {/* Indicador de estado de sincronización global */}
+          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 bg-slate-50 border border-slate-200/60 px-2 py-1 rounded-md">
+            <div className={`w-1.5 h-1.5 rounded-full ${loading ? "bg-amber-500 animate-spin" : "bg-emerald-500"}`} />
+            {loading ? "Sincronizando caché..." : `${productos?.length || 0} SKUs en memoria`}
+          </div>
         </div>
 
         {/* CONTENEDOR DE TARJETAS / MÓDULOS */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           {modules.map((mod, i) => (
-            <motion.div
-              key={mod.path}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.05, duration: 0.3 }}
-              onClick={() => router.push(mod.path)}
-              className="group relative bg-slate-50 hover:bg-slate-900 border border-slate-200/60 hover:border-slate-900 p-6 rounded-xl transition-all duration-200 cursor-pointer flex flex-col justify-between min-h-[140px] shadow-xs"
-            >
-              <div>
-                <div className="flex items-center justify-between mb-4">
-                  <div className="p-2 bg-white text-slate-800 rounded-lg border border-slate-200/60 group-hover:bg-slate-800 group-hover:text-white group-hover:border-slate-700 shadow-xs transition-colors">
-                    {mod.icon}
+            <MotionLink key={mod.path} href={mod.path} passHref legacyBehavior>
+              <motion.a
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: i * 0.05, duration: 0.3 }}
+                className="group relative bg-slate-50 hover:bg-slate-900 border border-slate-200/60 hover:border-slate-900 p-6 rounded-xl transition-all duration-200 cursor-pointer flex flex-col justify-between min-h-[140px] shadow-xs"
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="p-2 bg-white text-slate-800 rounded-lg border border-slate-200/60 group-hover:bg-slate-800 group-hover:text-white group-hover:border-slate-700 shadow-xs transition-colors">
+                      {mod.icon}
+                    </div>
+                    {mod.badge && (
+                      <span className="text-[9px] font-bold tracking-wider uppercase bg-white border border-slate-200 text-slate-500 group-hover:bg-slate-800 group-hover:text-slate-300 group-hover:border-slate-700 px-2 py-0.5 rounded-md transition-colors">
+                        {mod.badge}
+                      </span>
+                    )}
                   </div>
-                  {mod.badge && (
-                    <span className="text-[9px] font-bold tracking-wider uppercase bg-white border border-slate-200 text-slate-500 group-hover:bg-slate-800 group-hover:text-slate-300 group-hover:border-slate-700 px-2 py-0.5 rounded-md transition-colors">
-                      {mod.badge}
-                    </span>
-                  )}
+                  <h3 className="text-sm font-bold text-slate-900 group-hover:text-white transition-colors tracking-tight">
+                    {mod.title}
+                  </h3>
+                  <p className="text-xs text-slate-500 group-hover:text-slate-400 transition-colors mt-1.5 font-medium leading-relaxed max-w-sm">
+                    {mod.description}
+                  </p>
                 </div>
-                <h3 className="text-sm font-bold text-slate-900 group-hover:text-white transition-colors tracking-tight">
-                  {mod.title}
-                </h3>
-                <p className="text-xs text-slate-500 group-hover:text-slate-400 transition-colors mt-1.5 font-medium leading-relaxed max-w-sm">
-                  {mod.description}
-                </p>
-              </div>
 
-              <div className="flex justify-end mt-4">
-                <ArrowRight size={14} className="text-slate-400 group-hover:text-white group-hover:translate-x-1 transition-all" />
-              </div>
-            </motion.div>
+                <div className="flex justify-end mt-4">
+                  <ArrowRight size={14} className="text-slate-400 group-hover:text-white group-hover:translate-x-1 transition-all" />
+                </div>
+              </motion.a>
+            </MotionLink>
           ))}
         </div>
       </div>

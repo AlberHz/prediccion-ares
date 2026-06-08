@@ -7,8 +7,11 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine, Label 
 } from "recharts";
 
-const AÑO_ACTUAL = 2026;
-const MES_ACTUAL_NUM = 5; // Junio 2026 (0-indexed = 5)
+// 🗓️ CONFIGURACIÓN DE FECHA 100% DINÁMICA AUTOMÁTICA
+const fechaActualComputada = new Date();
+const AÑO_ACTUAL = fechaActualComputada.getFullYear(); // Detecta automáticamente el año en curso
+const MES_ACTUAL_NUM = fechaActualComputada.getMonth(); // Detecta dinámicamente el mes real (0 = Ene, 5 = Jun, etc.)
+
 const DOCUMENTOS_SALIDA = new Set(["NS", "22", "23", "93", "TD"]);
 const NOMBRES_MESES = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"];
 
@@ -100,7 +103,7 @@ export default function GraficoPredictivoAresIA() {
     const leadTimeDias = item.lead_time;
     const mesesLeadTime = Math.max(1, Math.ceil(leadTimeDias / 30));
 
-    // 1. CONSUMOS HISTÓRICOS REALES
+    // 1. CONSUMOS HISTÓRICOS REALES (Agrupa de forma segura por Mes-Año)
     const todasLasSalidas = item.movimientos.filter(esMovimientoSalida);
     const historialPorMesAnual: Record<string, number> = {};
     
@@ -114,7 +117,7 @@ export default function GraficoPredictivoAresIA() {
     const totalMesesActivos = valoresConsumo.length || 1;
     const sumaTotalUnidades = valoresConsumo.reduce((a, b) => a + b, 0);
     
-    // Configuración de tasas base
+    // Configuración de tasas base predictivas
     const consumoNormal = sumaTotalUnidades > 0 ? (sumaTotalUnidades / totalMesesActivos) : 100;
     const varianza = valoresConsumo.reduce((sum, val) => sum + Math.pow(val - consumoNormal, 2), 0) / Math.max(1, totalMesesActivos - 1);
     const desviacionEstandar = Math.sqrt(varianza || 10);
@@ -132,7 +135,7 @@ export default function GraficoPredictivoAresIA() {
       }
     });
 
-    // 2. SIMULACIÓN DE HITOS LOGÍSTICOS DE ABASTECIMIENTO
+    // 2. SIMULACIÓN DINÁMICA DE HITOS LOGÍSTICOS
     const calcularHitosEscenario = (tasaConsumoBase: number) => {
       let inventarioSimulado = stockFisicoActual;
       let yaQuebro = false;
@@ -140,7 +143,6 @@ export default function GraficoPredictivoAresIA() {
       let mesOC = "AL DÍA";
       const coeficientesEstacionales = [0.95, 0.90, 1.05, 1.00, 1.10, 1.02, 1.15, 1.18, 1.13, 1.12, 1.15, 1.10];
 
-      // Simular solo los meses restantes del año 2026 para el horizonte visual solicitado
       const mesesRestantesAño = 12 - MES_ACTUAL_NUM;
 
       for (let t = 0; t < mesesRestantesAño; t++) {
@@ -150,13 +152,13 @@ export default function GraficoPredictivoAresIA() {
         inventarioSimulado = inventarioSimulado + ingresosOC - (tasaConsumoBase * coeficientesEstacionales[indiceMes]);
 
         if (inventarioSimulado <= 0 && !yaQuebro) {
-          mesQuiebre = `${NOMBRES_MESES[indiceMes]} 26`;
+          mesQuiebre = `${NOMBRES_MESES[indiceMes]} '${String(AÑO_ACTUAL).slice(-2)}`;
           
           const tiempoCompraEstratégica = t - mesesLeadTime;
           const idxOC = MES_ACTUAL_NUM + tiempoCompraEstratégica;
           
           if (idxOC >= 0) {
-            mesOC = `${NOMBRES_MESES[idxOC]} 26`;
+            mesOC = `${NOMBRES_MESES[idxOC]} '${String(AÑO_ACTUAL).slice(-2)}`;
           } else {
             mesOC = "RETRASADO";
           }
@@ -172,7 +174,7 @@ export default function GraficoPredictivoAresIA() {
     const hitoAresIA = calcularHitosEscenario(consumoAresIA);
     const hitoEstres = calcularHitosEscenario(consumoEstres);
 
-    // 3. CONSTRUCCIÓN DE LA LÍNEA DE TIEMPO DEL GRÁFICO (ACOTADO ESTRICTAMENTE HASTA DICIEMBRE 2026)
+    // 3. CONSTRUCCIÓN DE LA LÍNEA DE TIEMPO DEL GRÁFICO (DINA-MÓVIL)
     const salidasPorMesAñoActual: Record<number, number> = {};
     todasLasSalidas.forEach((m: any) => {
       const f = m.date ? new Date(m.date) : new Date(m.created_at);
@@ -184,12 +186,12 @@ export default function GraficoPredictivoAresIA() {
     const datosCronologicosGrafico: any[] = [];
     let stockIterativoPasado = stockFisicoActual;
 
-    // Pasado (Ene 2026 - May 2026): Barras fijas e inalterables
+    // Pasado Dinámico (Ene hasta mes anterior actual)
     for (let m = MES_ACTUAL_NUM - 1; m >= 0; m--) {
       const salidasReales = salidasPorMesAñoActual[m] || 0;
       stockIterativoPasado += salidasReales;
       datosCronologicosGrafico.unshift({
-        mes: `${NOMBRES_MESES[m]} 26`,
+        mes: `${NOMBRES_MESES[m]} '${String(AÑO_ACTUAL).slice(-2)}`,
         "Stock Normal": Math.max(0, stockIterativoPasado),
         "Stock Estadístico (Ares IA)": Math.max(0, stockIterativoPasado),
         "Stock de Riesgo (Máx)": Math.max(0, stockIterativoPasado),
@@ -198,23 +200,31 @@ export default function GraficoPredictivoAresIA() {
       });
     }
 
-    // Futuro (Jun 2026 - Dic 2026): Solo meses pertenecientes al ciclo fiscal 2026
+    // Futuro Dinámico (Mes actual en curso hasta Diciembre)
     let invCorrienteNormal = stockFisicoActual;
     let invCorrienteEstadistico = stockFisicoActual;
     let invCorrienteRiesgo = stockFisicoActual;
     const coeficientesEstacionales = [0.95, 0.90, 1.05, 1.00, 1.10, 1.02, 1.15, 1.18, 1.13, 1.12, 1.15, 1.10];
 
     for (let m = MES_ACTUAL_NUM; m < 12; m++) {
-      const etiquetaMesAnual = `${NOMBRES_MESES[m]} 26`;
+      const etiquetaMesAnual = `${NOMBRES_MESES[m]} '${String(AÑO_ACTUAL).slice(-2)}`;
       const ingresosOC = arribosRealesPorMes[m] || 0;
       const factorEstacional = coeficientesEstacionales[m];
 
-      invCorrienteNormal = invCorrienteNormal + ingresosOC - (consumoNormal * factorEstacional);
-      invCorrienteEstadistico = invCorrienteEstadistico + ingresosOC - (consumoAresIA * factorEstacional);
-      invCorrienteRiesgo = invCorrienteRiesgo + ingresosOC - (consumoEstres * factorEstacional);
+      // 🛠️ SUMAR MOVIMIENTOS REALES DEL MES ACTUAL EN CURSO (JUNIO)
+      const consumoEfectivoMesActual = salidasPorMesAñoActual[m] || 0;
 
-      const consumoElegidoVisual = escenarioVisual === "ESTADISTICO" ? (consumoAresIA * factorEstacional) :
-                                   escenarioVisual === "NORMAL" ? (consumoNormal * factorEstacional) : (consumoEstres * factorEstacional);
+      // Si es el mes en curso, compara qué es mayor: lo que ya consumió o la predicción teórica
+      const consumoNormalAjustado = m === MES_ACTUAL_NUM ? Math.max(consumoEfectivoMesActual, consumoNormal * factorEstacional) : (consumoNormal * factorEstacional);
+      const consumoIAAjustado = m === MES_ACTUAL_NUM ? Math.max(consumoEfectivoMesActual, consumoAresIA * factorEstacional) : (consumoAresIA * factorEstacional);
+      const consumoEstresAjustado = m === MES_ACTUAL_NUM ? Math.max(consumoEfectivoMesActual, consumoEstres * factorEstacional) : (consumoEstres * factorEstacional);
+
+      invCorrienteNormal = invCorrienteNormal + ingresosOC - consumoNormalAjustado;
+      invCorrienteEstadistico = invCorrienteEstadistico + ingresosOC - consumoIAAjustado;
+      invCorrienteRiesgo = invCorrienteRiesgo + ingresosOC - consumoEstresAjustado;
+
+      const consumoElegidoVisual = escenarioVisual === "ESTADISTICO" ? consumoIAAjustado :
+                                   escenarioVisual === "NORMAL" ? consumoNormalAjustado : consumoEstresAjustado;
 
       datosCronologicosGrafico.push({
         mes: etiquetaMesAnual,
@@ -243,7 +253,7 @@ export default function GraficoPredictivoAresIA() {
     };
   }, [productos, skuSeleccionadoId, escenarioVisual]);
 
-  // Filtro Maestro: Búsqueda dinámica reactiva (Limpio por defecto)
+  // Filtro Maestro: Búsqueda dinámica reactiva
   const productosFiltrados = useMemo(() => {
     if (!busqueda.trim() && familiaSeleccionada === "TODAS") return [];
     return productos.filter(p => {
@@ -266,7 +276,7 @@ export default function GraficoPredictivoAresIA() {
   return (
     <div className="bg-[#f8fafc] p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4 w-full mx-auto text-slate-800 antialiased">
       
-      {/* SECTOR FILTROS FLEXIBLE: BUSQUEDA POR TEXTO + FAMILIA (NADA CARGADO POR DEFECTO) */}
+      {/* SECTOR FILTROS FLEXIBLE */}
       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-3 relative">
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
           
@@ -378,7 +388,7 @@ export default function GraficoPredictivoAresIA() {
             <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
               <ShieldAlert size={14} className="text-purple-600" />
               <h4 className="text-xs font-black uppercase tracking-wider text-slate-900">
-                Matriz de Planificación Inversa y Abastecimiento por Escenarios (Periodo Fiscal 2026)
+                Matriz de Planificación Inversa y Abastecimiento por Escenarios (Ciclo Móvil Dinámico)
               </h4>
             </div>
 
@@ -409,7 +419,6 @@ export default function GraficoPredictivoAresIA() {
 
               {/* Recomendación Ares IA */}
               <div className="border border-purple-200 rounded-lg p-3 bg-purple-50/30 flex flex-col justify-between relative overflow-hidden">
-                <div className="absolute top-0 right-0 bg-purple-600 text-white font-black text-[7px] px-2 py-0.5 rounded-bl uppercase tracking-widest"></div>
                 <div>
                   <div className="flex justify-between items-center">
                     <span className="text-[10px] font-black text-purple-700 uppercase">2. TRAYECTORIA ESTADISTICA</span>
@@ -432,7 +441,7 @@ export default function GraficoPredictivoAresIA() {
                 </div>
               </div>
 
-              {/* Saturación por Estrés */}
+              {/* Demanda Máxima */}
               <div className="border border-rose-200 rounded-lg p-3 bg-rose-50/30 flex flex-col justify-between">
                 <div>
                   <div className="flex justify-between items-center">
@@ -511,28 +520,27 @@ export default function GraficoPredictivoAresIA() {
                   />
                   <Legend verticalAlign="top" height={32} iconType="circle" iconSize={6} wrapperStyle={{ fontSize: '10px', fontWeight: 'black' }} />
                   
-                  {/* Barras de Consumo: Historial inalterado en el pasado, variables solo a futuro */}
                   <Bar yAxisId="right" dataKey="Consumo Visual" fill="#94a3b8" maxBarSize={24} radius={[3, 3, 0, 0]} opacity={0.4} name="Promedio" />
 
                   <Line yAxisId="left" type="monotone" dataKey="Stock de Riesgo (Máx)" stroke="#f43f5e" strokeWidth={1.2} strokeDasharray="4 4" dot={false} name="Trayectoria MAX (+35%)" />
                   <Line yAxisId="left" type="monotone" dataKey="Stock Normal" stroke="#64748b" strokeWidth={1.2} strokeDasharray="5 2" dot={false} name="Trayectoria Lineal Base" />
                   <Area yAxisId="left" type="monotone" dataKey="Stock Estadístico (Ares IA)" stroke="#4f46e5" strokeWidth={2.5} fillOpacity={1} fill="url(#gradientEstadistico)" name="Curva Predictiva" dot={{ r: 1.5 }} />
 
-                  {/* LÍNEA GUÍA: CALENDARIO EXACTO DE COLOCACIÓN DE ORDEN DE COMPRA (SI CAE EN EL HORIZONTE DE 2026) */}
-                  {analisisSku.hitoGraficoActivo.mesOC !== "AL DÍA" && analisisSku.hitoGraficoActivo.mesOC !== "RETRASADO" && analisisSku.hitoGraficoActivo.mesOC.includes("26") && (
+                  {/* LÍNEA GUÍA ORDEN DE COMPRA */}
+                  {analisisSku.hitoGraficoActivo.mesOC !== "AL DÍA" && analisisSku.hitoGraficoActivo.mesOC !== "RETRASADO" && (
                     <ReferenceLine yAxisId="left" x={analisisSku.hitoGraficoActivo.mesOC} stroke="#d97706" strokeWidth={2} strokeDasharray="4 3">
                       <Label value={`COLOCAR OC: ${analisisSku.hitoGraficoActivo.mesOC}`} position="top" fill="#b45309" fontSize={8} fontWeight="black" />
                     </ReferenceLine>
                   )}
 
-                  {/* LÍNEA GUÍA: PUNTO ESTIMADO DE QUIEBRE */}
-                  {analisisSku.hitoGraficoActivo.mesQuiebre !== "OPERATIVO" && analisisSku.hitoGraficoActivo.mesQuiebre.includes("26") && (
+                  {/* LÍNEA GUÍA QUIEBRE DE STOCK */}
+                  {analisisSku.hitoGraficoActivo.mesQuiebre !== "OPERATIVO" && (
                     <ReferenceLine yAxisId="left" x={analisisSku.hitoGraficoActivo.mesQuiebre} stroke="#ef4444" strokeWidth={2}>
                       <Label value={`QUIEBRE STOCK: ${analisisSku.hitoGraficoActivo.mesQuiebre}`} position="top" fill="#ef4444" fontSize={8} fontWeight="black" />
                     </ReferenceLine>
                   )}
 
-                  {/* Marcadores de Arribos de OC confirmados en ERP */}
+                  {/* Marcadores de Arribos */}
                   {analisisSku.proyeccionesPorMes.map((p: any, idx: number) => {
                     if (p.cantidadArribo > 0) {
                       return (

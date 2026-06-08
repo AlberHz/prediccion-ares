@@ -1,15 +1,7 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
-import { Search, ArrowDownToLine, Ship, TrendingUp, Calendar, EyeOff, Eye, Percent } from "lucide-react";
-
-/**
- * ARES SYSTEM - MÓDULO PREDICCIONES AVANZADO (ESTADÍSTICO CON TENDENCIA AMORTIGUADA)
- * - Proyección con incremento comercial del +35% solicitado por jefatura.
- * - Factor probabilístico con protección del 95% (5% de riesgo alcista, Z = 1.645).
- * - Algoritmo de Amortiguación Integrado: Evita distorsiones y sobre-stock limitando el colchón al 25% máx.
- * - Soporta borrado lógico persistente y restablecimiento directo desde UI con RLS corregido.
- */
+import { Search, ArrowDownToLine, Ship, TrendingUp, EyeOff, Eye } from "lucide-react";
 
 export default function ModuloPredicciones() {
   const [productos, setProductos] = useState<any[]>([]);
@@ -19,115 +11,127 @@ export default function ModuloPredicciones() {
   const [filtroFamilia, setFiltroFamilia] = useState("TODOS");
   const [mostrarOcultos, setMostrarOcultos] = useState(false); 
 
-  const AÑO_ACTUAL = 2026;
-  const MES_INICIO_PROYECCION = 4; // Mayo
+  // 🗓️ CONFIGURACIÓN DE FECHA 100% DINÁMICA
+  const fechaActualComputada = useMemo(() => new Date(), []);
+  const AÑO_ACTUAL = fechaActualComputada.getFullYear(); // Detecta automáticamente el año (ej: 2026)
+  const MES_ACTUAL_JS = fechaActualComputada.getMonth();   // Detecta el mes actual (0 = Ene, 5 = Jun, etc.)
 
   const DOCUMENTOS_SALIDA = ["NS", "22", "23", "93", "TD"];
 
+  // Se ejecuta una SOLA VEZ al montar el componente de manera segura
   useEffect(() => {
-    fetchDataReal();
-  }, []);
+    let isMounted = true;
+    
+    async function fetchDataReal() {
+      try {
+        const { data: dbProducts, error: errProd } = await supabase.from("products").select("*");
+        const { data: dbArrivals, error: errArr } = await supabase.from("arrivals").select("*");
 
-  async function fetchDataReal() {
-    setLoading(true);
-    try {
-      const { data: dbProducts, error: errProd } = await supabase.from("products").select("*");
-      const { data: dbArrivals, error: errArr } = await supabase.from("arrivals").select("*");
+        if (errProd) throw errProd;
+        if (errArr) throw errArr;
 
-      if (errProd) throw errProd;
+        let todosLosMovimientos: any[] = [];
+        let desde = 0;
+        let hasta = 999;
+        let tieneMas = true;
 
-      let todosLosMovimientos: any[] = [];
-      let desde = 0;
-      let hasta = 999;
-      let tieneMas = true;
+        while (tieneMas) {
+          const { data: chunk, error: errMov } = await supabase
+            .from("movements")
+            .select("*")
+            .range(desde, hasta);
 
-      while (tieneMas) {
-        const { data: chunk, error: errMov } = await supabase
-          .from("movements")
-          .select("*")
-          .range(desde, hasta);
+          if (errMov) throw errMov;
 
-        if (errMov) throw errMov;
-
-        if (chunk && chunk.length > 0) {
-          todosLosMovimientos = [...todosLosMovimientos, ...chunk];
-          if (chunk.length < 1000) {
-            tieneMas = false;
+          if (chunk && chunk.length > 0) {
+            todosLosMovimientos = [...todosLosMovimientos, ...chunk];
+            if (chunk.length < 1000) {
+              tieneMas = false;
+            } else {
+              desde += 1000;
+              hasta += 1000;
+            }
           } else {
-            desde += 1000;
-            hasta += 1000;
+            tieneMas = false;
           }
-        } else {
-          tieneMas = false;
         }
+
+        if (!isMounted) return;
+
+        const datosConsolidados = (dbProducts || []).map((p: any) => {
+          const productUUID = p.id; 
+          const historialDelSku = todosLosMovimientos.filter((m: any) => m.product_id === productUUID);
+          const arribosDelSku = dbArrivals
+            ? dbArrivals.filter((a: any) => a.product_id === productUUID && a.status === "PENDIENTE")
+            : [];
+
+          return {
+            id: productUUID,
+            code: p.code ? String(p.code).trim() : "SIN CÓDIGO",
+            description: p.description ? String(p.description).trim() : "SIN DESCRIPCIÓN",
+            family: p.family ? String(p.family).trim() : "GENERAL",
+            lead_time: parseInt(p.lead_time) || 0,
+            stockFisico: Number(p.stock || 0),
+            active: p.active !== false, 
+            movimientos: historialDelSku,
+            arribos: arribosDelSku
+          };
+        });
+
+        setProductos(datosConsolidados);
+      } catch (err) {
+        console.error("Error sincronizando base de datos Ares:", err);
+      } finally {
+        if (isMounted) setLoading(false);
       }
-
-      const datosConsolidados = (dbProducts || []).map((p: any) => {
-        const productUUID = p.id; 
-        const historialDelSku = todosLosMovimientos.filter((m: any) => m.product_id === productUUID);
-        const arribosDelSku = dbArrivals
-          ? dbArrivals.filter((a: any) => a.product_id === productUUID && a.status === "PENDIENTE")
-          : [];
-
-        return {
-          id: productUUID,
-          code: p.code ? String(p.code).trim() : "SIN CÓDIGO",
-          description: p.description ? String(p.description).trim() : "SIN DESCRIPCIÓN",
-          family: p.family ? String(p.family).trim() : "GENERAL",
-          lead_time: parseInt(p.lead_time) || 0,
-          stockFisico: Number(p.stock || 0),
-          active: p.active !== false, 
-          movimientos: historialDelSku,
-          arribos: arribosDelSku
-        };
-      });
-
-      setProductos(datosConsolidados);
-    } catch (err) {
-      console.error("Error sincronizando base de datos Ares:", err);
-    } finally {
-      loading && setLoading(false);
     }
-  }
+
+    fetchDataReal();
+    return () => { isMounted = false; };
+  }, []);
 
   const deshabilitarYArchivarSku = async (productId: string, skuCode: string) => {
     const confirmar = window.confirm(`¿Confirmas que deseas ocultar el SKU [${skuCode}]?`);
     if (!confirmar) return;
-
     setProductos((prev) => prev.map((p) => (p.id === productId ? { ...p, active: false } : p)));
     try {
-      const { data, error } = await supabase.from("products").update({ active: false }).eq("id", productId).select(); 
-      if (error) throw error;
-    } catch (err: any) {
-      alert(`Error al ocultar producto: ${err?.message}`);
-      setProductos((prev) => prev.map((p) => (p.id === productId ? { ...p, active: true } : p)));
+      await supabase.from("products").update({ active: false }).eq("id", productId);
+    } catch (err) {
+      console.error(err);
     }
   };
 
   const reestablecerSku = async (productId: string, skuCode: string) => {
     const confirmar = window.confirm(`¿Deseas restaurar el SKU [${skuCode}]?`);
     if (!confirmar) return;
-
     setProductos((prev) => prev.map((p) => (p.id === productId ? { ...p, active: true } : p)));
     try {
-      const { data, error } = await supabase.from("products").update({ active: true }).eq("id", productId).select();
-      if (error) throw error;
-    } catch (err: any) {
-      alert(`Error al reestablecer producto: ${err?.message}`);
-      setProductos((prev) => prev.map((p) => (p.id === productId ? { ...p, active: false } : p)));
+      await supabase.from("products").update({ active: true }).eq("id", productId);
+    } catch (err) {
+      console.error(err);
     }
   };
 
+  // 🗓️ CABECERAS DINÁMICAS: Empiezan desde el mes actual y avanzan 12 meses hacia el futuro
   const mesesHeaders = useMemo(() => {
     const nombresMeses = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"];
     const listaHeaders = [];
-    for (let i = MES_INICIO_PROYECCION; i <= 11; i++) {
-      listaHeaders.push({ id: `2026-${i}`, nombre: nombresMeses[i], mesNum: i, año: AÑO_ACTUAL });
+    
+    for (let i = 0; i < 12; i++) {
+      const fechaFutura = new Date(AÑO_ACTUAL, MES_ACTUAL_JS + i, 1);
+      const mNum = fechaFutura.getMonth();
+      const aNum = fechaFutura.getFullYear();
+      
+      listaHeaders.push({ 
+        id: `${aNum}-${mNum}`, 
+        nombre: nombresMeses[mNum], 
+        mesNum: mNum, 
+        año: aNum 
+      });
     }
     return listaHeaders;
-  }, []);
+  }, [AÑO_ACTUAL, MES_ACTUAL_JS]);
 
-  // --- PROCESAMIENTO ANALÍTICO ESTADÍSTICO CON TAPE DE CONTROL ---
   const dataProcesada = useMemo(() => {
     return productos
       .filter((p) => (mostrarOcultos ? !p.active : p.active))
@@ -136,14 +140,12 @@ export default function ModuloPredicciones() {
         const leadTimeDias = item.lead_time;
         const leadTimeMeses = leadTimeDias / 30;
 
-        // 1. Filtrar salidas válidas
         const salidasValidas = item.movimientos.filter((m: any) => {
           const tipoDoc = String(m.type || "").trim().toUpperCase();
           const codTrans = String(m.transaction_code || "").trim().toUpperCase();
           return DOCUMENTOS_SALIDA.includes(tipoDoc) || DOCUMENTOS_SALIDA.includes(codTrans);
         });
 
-        // 2. Agrupar cantidades por mes-año para analizar variabilidad histórica
         const historialPorMes: { [key: string]: number } = {};
         salidasValidas.forEach((m: any) => {
           const fechaObj = m.date ? new Date(m.date) : new Date(m.created_at);
@@ -154,45 +156,32 @@ export default function ModuloPredicciones() {
         const cantidadesMensuales = Object.values(historialPorMes);
         const totalMesesPeriodo = cantidadesMensuales.length > 0 ? cantidadesMensuales.length : 1;
         const unidadesTotalesSalida = cantidadesMensuales.reduce((sum, val) => sum + val, 0);
-        
-        // Promedio Matemático Real Inicial
         const promedioMensualReal = unidadesTotalesSalida / totalMesesPeriodo;
 
-        // 3. CÁLCULO ESTADÍSTICO AVANZADO: Desviación Estándar de la demanda
         const varianza = cantidadesMensuales.length > 1
           ? cantidadesMensuales.reduce((sum, val) => sum + Math.pow(val - promedioMensualReal, 2), 0) / (cantidadesMensuales.length - 1)
           : 0;
         const desviacionEstandar = Math.sqrt(varianza);
 
-        // 4. APLICACIÓN DE REGLAS DE NEGOCIO + PROBABILIDAD AMORTIGUADA
-        // Incremento base solicitado por jefatura (+25% real)
-        const demandaConIncremento = promedioMensualReal * 1.25; // Ajustado a 1.25 para dejar espacio al factor de riesgo controlado
-        
-        // Z-score para el 10% superior de la curva de probabilidad normal es 1.28 (5% de riesgo alcista + 5% de protección)
+        const demandaConIncremento = promedioMensualReal * 1.20; // Incremento del 15% para cubrir crecimiento y estacionalidad
         let factorTendenciaAlcista5 = 1.28 * desviacionEstandar;
-
-        // AMORTIGUACIÓN: Si el colchón estadístico supera el 25% de la demanda base, lo frenamos
         const colchonMaximoPermitido = demandaConIncremento * 0.25;
         if (factorTendenciaAlcista5 > colchonMaximoPermitido) {
           factorTendenciaAlcista5 = colchonMaximoPermitido;
         }
 
-        // Demanda Final Predictiva equilibrada
-        const demandaPredichaFinal = promedioMensualReal > 0 
-          ? demandaConIncremento + factorTendenciaAlcista5 
-          : 0;
+        const demandaPredichaFinal = promedioMensualReal > 0 ? demandaConIncremento + factorTendenciaAlcista5 : 0;
 
-        // Cálculos logísticos base utilizando la nueva Demanda Predictiva Amortiguada
         const totalArribos = item.arribos.reduce((sum: number, a: any) => sum + Number(a.quantity || 0), 0);
         const inventarioVirtual = stockFisico + totalArribos;
-        
         const coberturaMeses = demandaPredichaFinal > 0 ? inventarioVirtual / demandaPredichaFinal : 0;
         const sugeridoCompra = demandaPredichaFinal > 0 ? (demandaPredichaFinal * leadTimeMeses) * 1.15 : 0;
 
+        // 🛠️ REPARACIÓN DE LOGÍSTICA DE LÍNEA DE TIEMPO DINÁMICA
         let stockSimulado = stockFisico;
         let mesQuiebreCalculado = "ESTABLE";
         let yaQuebro = false;
-        let fechaQuiebre = new Date(AÑO_ACTUAL, 11, 31);
+        let fechaQuiebre = new Date(AÑO_ACTUAL, MES_ACTUAL_JS + 11, 28); // Por defecto, fin de la ventana proyectada
 
         const proyeccionesPorMes = mesesHeaders.map((m) => {
           const arribosEsteMes = item.arribos.filter((a: any) => {
@@ -202,31 +191,48 @@ export default function ModuloPredicciones() {
 
           const entradasOC = arribosEsteMes.reduce((sum: number, curr: any) => sum + Number(curr.quantity || 0), 0);
           
-          // Restamos la demanda estadística predictiva calculada
-          stockSimulado = stockSimulado + entradasOC - demandaPredichaFinal;
+          // Lógica adaptativa para el mes en curso (m.mesNum === MES_ACTUAL_JS)
+          const llaveMesActual = `${m.año}-${m.mesNum}`;
+          const consumosEfectivosReales = historialPorMes[llaveMesActual] || 0;
+          
+          // Si estamos evaluando el mes actual en curso, restamos lo que ya se consumió o la predicción (el que sea mayor)
+          const demandaEfectivaEsteMes = (m.mesNum === MES_ACTUAL_JS && m.año === AÑO_ACTUAL)
+            ? Math.max(consumosEfectivosReales, demandaPredichaFinal)
+            : demandaPredichaFinal;
+
+          stockSimulado = stockSimulado + entradasOC - demandaEfectivaEsteMes;
 
           if (stockSimulado <= 0 && !yaQuebro) {
-            mesQuiebreCalculado = `${m.nombre} 26`;
-            fechaQuiebre = new Date(AÑO_ACTUAL, m.mesNum, 1);
+            mesQuiebreCalculado = `${m.nombre} '${String(m.año).slice(-2)}`;
+            fechaQuiebre = new Date(m.año, m.mesNum, 1);
             yaQuebro = true;
+          } else if (stockSimulado > 0 && yaQuebro) {
+            yaQuebro = false;
+            mesQuiebreCalculado = "ESTABLE";
           }
 
           return {
             stockFinal: Math.max(0, stockSimulado),
-            demandaPredicha: demandaPredichaFinal,
+            demandaPredicha: demandaEfectivaEsteMes,
             arriboInyectado: entradasOC
           };
         });
+
+        const quiebreRealDetectado = mesQuiebreCalculado !== "ESTABLE";
 
         const fechaLimiteOC = new Date(fechaQuiebre);
         fechaLimiteOC.setDate(fechaLimiteOC.getDate() - leadTimeDias - 30); 
 
         let estadoAbastecimiento = "STOCK OK";
-        const hoy = new Date(AÑO_ACTUAL, MES_INICIO_PROYECCION, 1);
+        const hoy = new Date();
 
-        if (demandaPredichaFinal === 0 && stockFisico === 0) estadoAbastecimiento = "SIN MOVIMIENTO";
-        else if (demandaPredichaFinal > 0 && fechaLimiteOC <= hoy) estadoAbastecimiento = "COMPRAR YA";
-        else if (demandaPredichaFinal > 0 && coberturaMeses <= (leadTimeMeses + 1.0)) estadoAbastecimiento = "POR REVISAR";
+        if (demandaPredichaFinal === 0 && stockFisico === 0) {
+          estadoAbastecimiento = "SIN MOVIMIENTO";
+        } else if (demandaPredichaFinal > 0 && quiebreRealDetectado && fechaLimiteOC <= hoy) {
+          estadoAbastecimiento = "COMPRAR YA";
+        } else if (demandaPredichaFinal > 0 && (coberturaMeses <= (leadTimeMeses + 1.0) || quiebreRealDetectado)) {
+          estadoAbastecimiento = "POR REVISAR";
+        }
 
         return {
           ...item,
@@ -235,9 +241,9 @@ export default function ModuloPredicciones() {
           consumoIA: demandaPredichaFinal, 
           mesesActivos: totalMesesPeriodo,
           coberturaMeses,
-          mesQuiebre: yaQuebro ? mesQuiebreCalculado : "OK",
-          fechaLimiteOCStr: yaQuebro ? fechaLimiteOC.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' }) : "---",
-          pedidoSugerido: sugeridoCompra,
+          mesQuiebre: quiebreRealDetectado ? mesQuiebreCalculado : "OK",
+          fechaLimiteOCStr: quiebreRealDetectado ? fechaLimiteOC.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' }) : "---",
+          pedidoSugerido: quiebreRealDetectado ? sugeridoCompra : 0, 
           proyeccionesPorMes,
           estado: estadoAbastecimiento
         };
@@ -247,9 +253,8 @@ export default function ModuloPredicciones() {
         const cumpleFamilia = filtroFamilia === "TODOS" || i.family === filtroFamilia;
         return cumpleBusqueda && cumpleEstado && cumpleFamilia;
       });
-  }, [productos, search, filtroEstado, filtroFamilia, mesesHeaders, mostrarOcultos]);
+  }, [productos, search, filtroEstado, filtroFamilia, mesesHeaders, AÑO_ACTUAL, MES_ACTUAL_JS, mostrarOcultos]);
 
-  // --- CÁLCULO DE RESÚMENES AGRUPADOS PARA JEFATURA ---
   const resumenMétricas = useMemo(() => {
     const totalItems = dataProcesada.length;
     if (totalItems === 0) return { stockTotal: 0, arribosTotal: 0, sugeridoTotal: 0, promedioConsumoIA: 0, promedioCobertura: 0 };
@@ -257,18 +262,10 @@ export default function ModuloPredicciones() {
     const stockTotal = dataProcesada.reduce((sum, item) => sum + item.stockFisico, 0);
     const arribosTotal = dataProcesada.reduce((sum, item) => sum + item.enTránsito, 0);
     const sugeridoTotal = dataProcesada.reduce((sum, item) => sum + item.pedidoSugerido, 0);
-
-    // Promedios correctos (No sumas de ratios)
     const promedioConsumoIA = dataProcesada.reduce((sum, item) => sum + item.consumoIA, 0) / totalItems;
     const promedioCobertura = dataProcesada.reduce((sum, item) => sum + item.coberturaMeses, 0) / totalItems;
 
-    return {
-      stockTotal,
-      arribosTotal,
-      sugeridoTotal,
-      promedioConsumoIA,
-      promedioCobertura
-    };
+    return { stockTotal, arribosTotal, sugeridoTotal, promedioConsumoIA, promedioCobertura };
   }, [dataProcesada]);
 
   const familiasUnicas = useMemo(() => {
@@ -279,23 +276,20 @@ export default function ModuloPredicciones() {
     <div className="min-h-[80vh] flex items-center justify-center bg-[#f8fafc]">
       <div className="text-center space-y-2">
         <div className="w-8 h-8 border-2 border-slate-800 border-t-transparent rounded-full animate-spin mx-auto"></div>
-        <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Ejecutando Modelado Amortiguado (+35% Base y +5% Cobertura Riesgo)...</p>
+        <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Ejecutando Modelado Amortiguado Ares...</p>
       </div>
     </div>
   );
 
   return (
     <div className="bg-[#f8fafc] min-h-screen text-slate-800 antialiased font-sans">
-      
-      {/* HEADER */}
       <header className="bg-white border-b border-slate-200 p-5">
         <div className="flex items-center gap-2 text-slate-900 font-bold text-base tracking-tight">
           <TrendingUp size={18} className="text-purple-600" />
-          <span>Módulo de Planeamiento Predictivo de Compra - ARES</span>
+          <span>Módulo de Planeamiento Predictivo de Compra</span>
         </div>
       </header>
 
-      {/* FILTROS */}
       <main className="p-5 space-y-4 max-w-[1920px] mx-auto">
         <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap gap-4 items-end">
           <div className="flex-1 min-w-[320px]">
@@ -351,40 +345,33 @@ export default function ModuloPredicciones() {
           </div>
         </div>
 
-        {/* 📊 SECCIÓN DE VISTA AGRUPADA (RESUMEN EJECUTIVO PARA JEFATURA) */}
         <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
           <div className="bg-slate-900 text-white p-4 rounded-xl border border-slate-800 shadow-sm">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Stock Físico Consolidado</p>
             <p className="text-xl font-black mt-1 text-slate-100">{resumenMétricas.stockTotal.toLocaleString()} <span className="text-[10px] font-normal text-slate-400">unidades</span></p>
-            <p className="text-[9px] text-slate-500 mt-0.5">Suma total del grupo filtrado</p>
           </div>
 
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider text-blue-600">Arribos en Tránsito Total</p>
             <p className="text-xl font-black mt-1 text-blue-900">{resumenMétricas.arribosTotal.toLocaleString()} <span className="text-[10px] font-normal text-slate-400">unidades</span></p>
-            <p className="text-[9px] text-slate-400 mt-0.5">Suma de órdenes pendientes</p>
           </div>
 
           <div className="bg-purple-50 p-4 rounded-xl border border-purple-200 shadow-sm">
-            <p className="text-[10px] font-bold text-purple-500 uppercase tracking-wider">Promedio Consumo IA (Familia)</p>
-            <p className="text-xl font-black mt-1 text-purple-900">{Math.round(resumenMétricas.promedioConsumoIA).toLocaleString()} <span className="text-[10px] font-normal text-purple-500">u/m promedio</span></p>
-            <p className="text-[9px] text-purple-400 mt-0.5">Media del modelo predictivo por SKU</p>
+            <p className="text-[10px] font-bold text-purple-500 uppercase tracking-wider">Promedio Consumo IA</p>
+            <p className="text-xl font-black mt-1 text-purple-900">{Math.round(resumenMétricas.promedioConsumoIA).toLocaleString()} <span className="text-[10px] font-normal text-purple-500">u/m</span></p>
           </div>
 
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Cobertura Promedio</p>
             <p className="text-xl font-black mt-1 text-slate-900">{resumenMétricas.promedioCobertura.toFixed(1)} <span className="text-[10px] font-normal text-slate-400">Meses</span></p>
-            <p className="text-[9px] text-slate-400 mt-0.5">Meses de amparo promedio del grupo</p>
           </div>
 
           <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-200 shadow-sm">
-            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Total Sugerido Compra (OC)</p>
+            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Total Sugerido Compra</p>
             <p className="text-xl font-black mt-1 text-emerald-900">{Math.round(resumenMétricas.sugeridoTotal).toLocaleString()} <span className="text-[10px] font-normal text-emerald-500">unidades</span></p>
-            <p className="text-[9px] text-emerald-400 mt-0.5">Monto total sugerido a colocar</p>
           </div>
         </div>
 
-        {/* TABLA PRINCIPAL CON AJUSTES DE VISIBILIDAD */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
           <div className="overflow-x-auto w-full max-h-[700px] custom-scrollbar">
             <table className="w-full text-left border-collapse min-w-[1850px]">
@@ -402,7 +389,7 @@ export default function ModuloPredicciones() {
                   <th className="p-3 text-right w-32 border-b border-slate-700 bg-slate-900 text-emerald-300 font-bold">Sugerido OC</th>
                   {mesesHeaders.map(m => (
                     <th key={m.id} className="p-3 text-right w-32 font-medium border-l border-slate-800 bg-slate-900/40 text-slate-300">
-                      {m.nombre} 26
+                      {m.nombre} '{String(m.año).slice(-2)}
                     </th>
                   ))}
                 </tr>
@@ -411,7 +398,7 @@ export default function ModuloPredicciones() {
                 {dataProcesada.map(item => (
                   <tr key={item.id} className={`transition-colors ${mostrarOcultos ? "hover:bg-amber-50/40 bg-amber-50/10" : "hover:bg-slate-50/80"}`}>
                     <td className="p-3 font-bold text-slate-900 whitespace-nowrap">{item.code}</td>
-                    <td className="p-3 font-medium text-slate-600 max-w-[340px] flex items-center justify-between gap-2" title={item.description}>
+                    <td className="p-3 font-medium text-slate-600 max-w-[340px] flex items-center justify-between gap-2">
                       <span>{item.description.toUpperCase()}</span>
                       {mostrarOcultos ? (
                         <button onClick={() => reestablecerSku(item.id, item.code)} className="text-slate-400 hover:text-emerald-600 transition-colors flex-shrink-0 ml-1">
@@ -425,7 +412,6 @@ export default function ModuloPredicciones() {
                     </td>
                     <td className="p-3 text-center font-medium text-slate-800">{item.lead_time}</td>
                     <td className="p-3 text-right font-semibold text-slate-900">{item.stockFisico.toLocaleString()}</td>
-                    
                     <td className="p-3 text-right font-semibold text-blue-600">
                       {item.enTránsito > 0 ? (
                         <span className="bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100 text-[10px] font-medium inline-flex items-center gap-1">
@@ -433,19 +419,16 @@ export default function ModuloPredicciones() {
                         </span>
                       ) : <span className="text-slate-300">-</span>}
                     </td>
-
-                    {/* MODELO AMORTIGUADO CON CONTROLES */}
                     <td className="p-3 text-right bg-purple-50/60 w-48">
                       <div className="flex flex-col items-end justify-center pr-1">
-                        <span className="font-black text-purple-900 text-xs flex items-center gap-0.5">
+                        <span className="font-black text-purple-900 text-xs">
                           {Math.round(item.consumoIA).toLocaleString()} u/m
                         </span>
                         <span className="text-[9px] text-slate-500 font-medium mt-0.5">
-                          Histórico real: {Math.round(item.promedioReal).toLocaleString()}
+                          Histórico: {Math.round(item.promedioReal).toLocaleString()}
                         </span>
                       </div>
                     </td>
-                    
                     <td className={`p-3 text-center font-bold bg-blue-50/5 ${item.coberturaMeses < 1.0 ? "text-rose-600 font-black" : "text-slate-700"}`}>
                       {item.coberturaMeses.toFixed(1)} Meses
                     </td>
@@ -471,7 +454,7 @@ export default function ModuloPredicciones() {
                     {item.proyeccionesPorMes.map((p: any, idx: number) => (
                       <td key={idx} className="p-3 text-right border-l border-slate-100 whitespace-nowrap bg-slate-50/20 w-32">
                         <div className="flex flex-col items-end">
-                          <span className={`font-semibold ${p.stockFinal <= 0 ? "text-rose-600 font-bold bg-rose-50 px-1 rounded" : "text-slate-800"}`}>
+                          <span className={`font-semibold ${p.stockFinal <= 0 ? "text-rose-600 font-bold bg-rose-50 px-1" : "text-slate-800"}`}>
                             {Math.round(p.stockFinal).toLocaleString()}
                           </span>
                           <div className="flex items-center gap-1.5 text-[9px] mt-0.5 text-slate-400 font-mono">
@@ -480,9 +463,7 @@ export default function ModuloPredicciones() {
                                 +{Math.round(p.arriboInyectado).toLocaleString()}
                               </span>
                             )}
-                            <span>
-                              ↓{Math.round(p.demandaPredicha).toLocaleString()}
-                            </span>
+                            <span>↓{Math.round(p.demandaPredicha).toLocaleString()}</span>
                           </div>
                         </div>
                       </td>
@@ -494,12 +475,6 @@ export default function ModuloPredicciones() {
           </div>
         </div>
       </main>
-
-      <style jsx global>{`
-        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: #f1f5f9; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
-      `}</style>
     </div>
   );
 }

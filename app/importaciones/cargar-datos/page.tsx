@@ -64,7 +64,7 @@ export default function CargarDatosPage() {
       let mensajeExito = "Sincronización Exitosa: ";
 
       // ==========================================
-      // BLOQUE A: Actualización de Stock y Costo (UPDATE / UPSERT SEGURO)
+      // BLOQUE A: Actualización de Stock y Costo (PROTEGE LEAD TIMES)
       // ==========================================
       if (dataStock.length > 0) {
         const productsToUpsert = dataStock.map(item => ({
@@ -73,10 +73,10 @@ export default function CargarDatosPage() {
           description: item.description,
           stock: item.stock,            
           unit: item.unit,
-          lead_time: item.lead_time,    
           family: item.family,
           cost: item.cost,
           currency: "USD"
+          // Se quitó lead_time de aquí para evitar sobreescrituras accidentales
         }));
 
         const { error: stockError } = await supabase
@@ -163,7 +163,7 @@ export default function CargarDatosPage() {
             </div>
             <p className="text-[11px] text-slate-400 font-medium leading-relaxed mb-5">
               Requerido para sobreescribir los inventarios base y costos actuales. <br />
-              Columnas: <span className="font-mono text-slate-500 text-[10px]">CODIGO, DESCRIPCIÓN, STOCK, UND, LEAD_TIME, FAMILIA, COSTO</span>
+              Columnas: <span className="font-mono text-slate-500 text-[10px]">CODIGO, DESCRIPCIÓN, STOCK, UND, FAMILIA, COSTO</span>
             </p>
           </div>
           
