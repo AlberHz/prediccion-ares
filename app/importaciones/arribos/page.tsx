@@ -1,13 +1,15 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabase";
-import { Ship, Plus, Trash2, Calendar, Hash, Search, AlertCircle, Check, Edit2, Save, X } from "lucide-react";
+import { Ship, Plus, Trash2, Calendar, Hash, Search, AlertCircle, Check, Edit2, Save, X, Download } from "lucide-react";
+import * as XLSX from "xlsx";
 
 /**
  * ARES SYSTEM - MÓDULO DE GESTIÓN DE ARRIBOS (COMPILACIÓN CORREGIDA)
  * - Nueva disposición vertical (Formulario arriba, Tabla completa abajo).
  * - Edición DUAL inline de cantidades Y fechas directo en la tabla con persistencia completa.
  * - Iconografía marítima integrada en las filas de tránsito.
+ * - Botón de exportación masiva o filtrada de tránsitos a formato Excel.
  */
 
 export default function GestionArribos() {
@@ -170,6 +172,26 @@ export default function GestionArribos() {
     }
   }
 
+  // Exportar registros de arribos visibles/filtrados a archivo plano Excel (.xlsx)
+  const handleExportarExcel = () => {
+    if (arribosFiltradosTabla.length === 0) return;
+
+    const filasExcel = arribosFiltradosTabla.map((a) => ({
+      "CÓDIGO SKU": a.products?.code || "MIGRADO",
+      "DESCRIPCIÓN DEL ARTÍCULO": a.products?.description ? a.products.description.toUpperCase() : "SIN IDENTIFICACIÓN",
+      "FAMILIA": a.products?.family ? a.products.family.toUpperCase() : "GENERAL",
+      "CANTIDAD EN TRÁNSITO": a.quantity || 0,
+      "FECHA ETA": a.eta_date || "---",
+      "ORDEN DE COMPRA": a.order_code || "---"
+    }));
+
+    const hojaDeTrabajo = XLSX.utils.json_to_sheet(filasExcel);
+    const libroDeTrabajo = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(libroDeTrabajo, hojaDeTrabajo, "Arribos en Tránsito");
+
+    XLSX.writeFile(libroDeTrabajo, "Reporte_Arribos_Transito.xlsx");
+  };
+
   const productosFiltradosSelector = productos.filter((p) => {
     const minTerm = busquedaProducto.toLowerCase();
     const codigo = p.code?.toLowerCase() || "";
@@ -318,7 +340,7 @@ export default function GestionArribos() {
               </div>
               <button
                 type="submit"
-                className="w-full sm:w-48 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] uppercase tracking-wider py-2.5 px-4 rounded-lg shadow-sm transition-all text-center"
+                className="w-full sm:w-48 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] uppercase tracking-wider py-2.5 px-4 rounded-lg shadow-sm transition-all text-center text-ellipsis overflow-hidden"
               >
                 Confirmar Arribo
               </button>
@@ -339,9 +361,23 @@ export default function GestionArribos() {
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
             </div>
-            <span className="text-[10px] font-bold text-slate-400 bg-slate-100 border border-slate-200 px-2 py-1 rounded-md self-end sm:self-auto">
-              {arribosFiltradosTabla.length} CARGAS ACTIVAS
-            </span>
+            
+            <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+              {/* BOTÓN ADICIONADO: Exportar Arribos a Excel */}
+              <button
+                onClick={handleExportarExcel}
+                disabled={arribosFiltradosTabla.length === 0}
+                className="p-2 text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 border border-emerald-200 rounded-lg bg-white transition-all flex items-center gap-1.5 disabled:opacity-40 disabled:hover:bg-white disabled:text-slate-400 cursor-pointer"
+                title="Descargar arribos en Excel"
+              >
+                <Download size={13} />
+                <span className="text-[11px] font-bold">Exportar Excel</span>
+              </button>
+
+              <span className="text-[10px] font-bold text-slate-400 bg-slate-100 border border-slate-200 px-2 py-1.5 rounded-md whitespace-nowrap">
+                {arribosFiltradosTabla.length} CARGAS ACTIVAS
+              </span>
+            </div>
           </div>
 
           <div className="overflow-x-auto w-full flex-1 max-h-[650px] custom-scrollbar">

@@ -1,13 +1,15 @@
 "use client";
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
-import { Clock, Search, CheckCircle2, AlertCircle, RefreshCw, SlidersHorizontal } from "lucide-react";
+import { Clock, Search, CheckCircle2, AlertCircle, RefreshCw, SlidersHorizontal, Download } from "lucide-react";
+import * as XLSX from "xlsx";
 
 /**
  * ARES SYSTEM - MÓDULO DE GESTIÓN DE LEAD TIMES
  * - Edición en tiempo real de tiempos de entrega en días (columna física 'lead_time' #int4).
  * - Buscador interactivo por SKU (código) y descripción comercial.
  * - Sistema de guardado rápido mediante Blur (perder foco) o tecla Enter.
+ * - Exportación de la matriz activa directamente a formato Excel.
  */
 
 export default function GestionLeadTime() {
@@ -50,6 +52,7 @@ export default function GestionLeadTime() {
       console.error("Error al cargar productos para Lead Time:", error);
       setErrorMsg(`Error de comunicación: ${error?.message || error}`);
     } finally {
+      loading;
       setLoading(false);
     }
   }
@@ -86,6 +89,28 @@ export default function GestionLeadTime() {
       setSavingId(null);
     }
   }
+
+  // Función para exportar los datos filtrados actuales a archivo .xlsx
+  const handleExportarExcel = () => {
+    if (productosFiltrados.length === 0) return;
+
+    // Formatear la estructura de las columnas mapeadas para el Excel final
+    const filasExcel = productosFiltrados.map((p) => ({
+      "CÓDIGO": p.code,
+      "DESCRIPCIÓN": p.description ? p.description.toUpperCase() : "SIN DESCRIPCIÓN COMERCIAL",
+      "FAMILIA": p.family ? p.family.toUpperCase() : "GENERAL",
+      "STOCK ACTUAL": p.stock || 0,
+      "LEAD TIME (DÍAS)": p.lead_time || 0
+    }));
+
+    // Creación del libro de trabajo con la librería XLSX
+    const hojaDeTrabajo = XLSX.utils.json_to_sheet(filasExcel);
+    const libroDeTrabajo = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(libroDeTrabajo, hojaDeTrabajo, "Lead Times");
+
+    // Descarga automatizada en el navegador del cliente
+    XLSX.writeFile(libroDeTrabajo, `Matriz_Lead_Times_${filtroFamilia}.xlsx`);
+  };
 
   // Filtrado lógico en cliente (Rápido y fluido)
   const productosFiltrados = productos.filter((p) => {
@@ -153,6 +178,17 @@ export default function GestionLeadTime() {
                 ))}
               </select>
             </div>
+
+            {/* BOTÓN ADICIONADO: Exportar a Excel */}
+            <button
+              onClick={handleExportarExcel}
+              disabled={productosFiltrados.length === 0}
+              className="p-2 text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 border border-emerald-200 rounded-lg bg-white transition-all flex items-center gap-1.5 disabled:opacity-40 disabled:hover:bg-white disabled:text-slate-400 cursor-pointer"
+              title="Descargar matriz en Excel"
+            >
+              <Download size={13} />
+              <span className="text-[11px] font-bold">Exportar Excel</span>
+            </button>
 
             <button 
               onClick={cargarProductos}

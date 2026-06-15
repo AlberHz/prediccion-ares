@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
-import { Search, ArrowDownToLine, Ship, TrendingUp, EyeOff, Eye } from "lucide-react";
+import { Search, ArrowDownToLine, Ship, TrendingUp, EyeOff, Eye, Layers } from "lucide-react";
 
 export default function ModuloPredicciones() {
   const [productos, setProductos] = useState<any[]>([]);
@@ -24,7 +24,8 @@ export default function ModuloPredicciones() {
     
     async function fetchDataReal() {
       try {
-        const { data: dbProducts, error: errProd } = await supabase.from("products").select("*");
+        // 🌟 Se agregó "custom_average_consumption" a la lectura de productos
+        const { data: dbProducts, error: errProd } = await supabase.from("products").select("id, code, description, family, lead_time, stock, active, custom_average_consumption");
         const { data: dbArrivals, error: errArr } = await supabase.from("arrivals").select("*");
 
         if (errProd) throw errProd;
@@ -73,6 +74,7 @@ export default function ModuloPredicciones() {
             lead_time: parseInt(p.lead_time) || 0,
             stockFisico: Number(p.stock || 0),
             active: p.active !== false, 
+            custom_average_consumption: parseInt(p.custom_average_consumption) || 0, // 🌟 Mapeado seguro a memoria
             movimientos: historialDelSku,
             arribos: arribosDelSku
           };
@@ -147,7 +149,7 @@ export default function ModuloPredicciones() {
         });
 
         const historialPorMes: { [key: string]: number } = {};
-        salidasValidas.forEach((m: any) => {
+        validasSalidas: salidasValidas.forEach((m: any) => {
           const fechaObj = m.date ? new Date(m.date) : new Date(m.created_at);
           const llaveMes = `${fechaObj.getFullYear()}-${fechaObj.getMonth()}`;
           historialPorMes[llaveMes] = (historialPorMes[llaveMes] || 0) + Math.abs(Number(m.quantity || 0));
@@ -156,15 +158,19 @@ export default function ModuloPredicciones() {
         const cantidadesMensuales = Object.values(historialPorMes);
         const totalMesesPeriodo = cantidadesMensuales.length > 0 ? cantidadesMensuales.length : 1;
         const unidadesTotalesSalida = cantidadesMensuales.reduce((sum, val) => sum + val, 0);
-        const promedioMensualReal = unidadesTotalesSalida / totalMesesPeriodo;
+        
+        // 🌟 REGLA DE NEGOCIO ENRIQUECIDA: Si tiene promedio manual fijado mayor a 0, usa ese, sino calcula el real del historial.
+        const promedioMensualReal = item.custom_average_consumption > 0 
+          ? item.custom_average_consumption 
+          : (unidadesTotalesSalida / totalMesesPeriodo);
 
         const varianza = cantidadesMensuales.length > 1
           ? cantidadesMensuales.reduce((sum, val) => sum + Math.pow(val - promedioMensualReal, 2), 0) / (cantidadesMensuales.length - 1)
           : 0;
-        const desviacionEstandar = Math.sqrt(varianza);
+        const desviaciónEstandar = Math.sqrt(varianza);
 
-        const demandaConIncremento = promedioMensualReal * 1.20; // Incremento del 15% para cubrir crecimiento y estacionalidad
-        let factorTendenciaAlcista5 = 1.28 * desviacionEstandar;
+        const demandaConIncremento = promedioMensualReal * 1.20; 
+        let factorTendenciaAlcista5 = 1.28 * desviaciónEstandar;
         const colchonMaximoPermitido = demandaConIncremento * 0.25;
         if (factorTendenciaAlcista5 > colchonMaximoPermitido) {
           factorTendenciaAlcista5 = colchonMaximoPermitido;
@@ -177,11 +183,10 @@ export default function ModuloPredicciones() {
         const coberturaMeses = demandaPredichaFinal > 0 ? inventarioVirtual / demandaPredichaFinal : 0;
         const sugeridoCompra = demandaPredichaFinal > 0 ? (demandaPredichaFinal * leadTimeMeses) * 1.15 : 0;
 
-        // 🛠️ REPARACIÓN DE LOGÍSTICA DE LÍNEA DE TIEMPO DINÁMICA
         let stockSimulado = stockFisico;
         let mesQuiebreCalculado = "ESTABLE";
         let yaQuebro = false;
-        let fechaQuiebre = new Date(AÑO_ACTUAL, MES_ACTUAL_JS + 11, 28); // Por defecto, fin de la ventana proyectada
+        let fechaQuiebre = new Date(AÑO_ACTUAL, MES_ACTUAL_JS + 11, 28); 
 
         const proyeccionesPorMes = mesesHeaders.map((m) => {
           const arribosEsteMes = item.arribos.filter((a: any) => {
@@ -191,11 +196,9 @@ export default function ModuloPredicciones() {
 
           const entradasOC = arribosEsteMes.reduce((sum: number, curr: any) => sum + Number(curr.quantity || 0), 0);
           
-          // Lógica adaptativa para el mes en curso (m.mesNum === MES_ACTUAL_JS)
           const llaveMesActual = `${m.año}-${m.mesNum}`;
           const consumosEfectivosReales = historialPorMes[llaveMesActual] || 0;
           
-          // Si estamos evaluando el mes actual en curso, restamos lo que ya se consumió o la predicción (el que sea mayor)
           const demandaEfectivaEsteMes = (m.mesNum === MES_ACTUAL_JS && m.año === AÑO_ACTUAL)
             ? Math.max(consumosEfectivosReales, demandaPredichaFinal)
             : demandaPredichaFinal;
@@ -255,6 +258,18 @@ export default function ModuloPredicciones() {
       });
   }, [productos, search, filtroEstado, filtroFamilia, mesesHeaders, AÑO_ACTUAL, MES_ACTUAL_JS, mostrarOcultos]);
 
+  // 🗂️ AGRUPACIÓN DINÁMICA POR FAMILIA PARA LA TABLA
+  const dataAgrupadaPorFamilia = useMemo(() => {
+    return dataProcesada.reduce((acc: { [key: string]: any[] }, item) => {
+      const familia = item.family || "GENERAL";
+      if (!acc[familia]) {
+        acc[familia] = [];
+      }
+      acc[familia].push(item);
+      return acc;
+    }, {});
+  }, [dataProcesada]);
+
   const resumenMétricas = useMemo(() => {
     const totalItems = dataProcesada.length;
     if (totalItems === 0) return { stockTotal: 0, arribosTotal: 0, sugeridoTotal: 0, promedioConsumoIA: 0, promedioCobertura: 0 };
@@ -276,7 +291,7 @@ export default function ModuloPredicciones() {
     <div className="min-h-[80vh] flex items-center justify-center bg-[#f8fafc]">
       <div className="text-center space-y-2">
         <div className="w-8 h-8 border-2 border-slate-800 border-t-transparent rounded-full animate-spin mx-auto"></div>
-        <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Ejecutando Modelado Amortiguado Ares...</p>
+        <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Ejecutando Modelado Predictivo Ares...</p>
       </div>
     </div>
   );
@@ -291,6 +306,7 @@ export default function ModuloPredicciones() {
       </header>
 
       <main className="p-5 space-y-4 max-w-[1920px] mx-auto">
+        {/* FILTROS */}
         <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap gap-4 items-end">
           <div className="flex-1 min-w-[320px]">
             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Buscador por Código</label>
@@ -345,6 +361,7 @@ export default function ModuloPredicciones() {
           </div>
         </div>
 
+        {/* METRICAS */}
         <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
           <div className="bg-slate-900 text-white p-4 rounded-xl border border-slate-800 shadow-sm">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Stock Físico Consolidado</p>
@@ -357,7 +374,7 @@ export default function ModuloPredicciones() {
           </div>
 
           <div className="bg-purple-50 p-4 rounded-xl border border-purple-200 shadow-sm">
-            <p className="text-[10px] font-bold text-purple-500 uppercase tracking-wider">Promedio Consumo IA</p>
+            <p className="text-[10px] font-bold text-purple-500 uppercase tracking-wider">Consumo Promedio</p>
             <p className="text-xl font-black mt-1 text-purple-900">{Math.round(resumenMétricas.promedioConsumoIA).toLocaleString()} <span className="text-[10px] font-normal text-purple-500">u/m</span></p>
           </div>
 
@@ -372,6 +389,7 @@ export default function ModuloPredicciones() {
           </div>
         </div>
 
+        {/* TABLA AGRUPADA POR FAMILIA */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
           <div className="overflow-x-auto w-full max-h-[700px] custom-scrollbar">
             <table className="w-full text-left border-collapse min-w-[1850px]">
@@ -382,11 +400,11 @@ export default function ModuloPredicciones() {
                   <th className="p-3 text-center w-24 border-b border-slate-700">L. Time</th>
                   <th className="p-3 text-right w-28 border-b border-slate-700">Stock</th>
                   <th className="p-3 text-right w-28 border-b border-slate-700">Arribos</th>
-                  <th className="p-3 text-right w-48 border-b border-slate-700 bg-purple-950 text-purple-300 font-black">Predicción (+25% + 5% Risk)</th>
+                  <th className="p-3 text-right w-48 border-b border-slate-700 bg-purple-950 text-purple-300 font-black">Prediccion</th>
                   <th className="p-3 text-center w-28 border-b border-slate-700 bg-slate-900 text-blue-300">Cobertura</th>
                   <th className="p-3 text-center w-24 border-b border-slate-700">Quiebre</th>
                   <th className="p-3 text-center w-28 border-b border-slate-700">Fecha OC</th>
-                  <th className="p-3 text-right w-32 border-b border-slate-700 bg-slate-900 text-emerald-300 font-bold">Sugerido OC</th>
+                  <th className="p-3 text-right w-32 border-b border-slate-700 bg-slate-900 text-emerald-300 font-bold">Punto ROP</th>
                   {mesesHeaders.map(m => (
                     <th key={m.id} className="p-3 text-right w-32 font-medium border-l border-slate-800 bg-slate-900/40 text-slate-300">
                       {m.nombre} '{String(m.año).slice(-2)}
@@ -395,81 +413,152 @@ export default function ModuloPredicciones() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-[11px]">
-                {dataProcesada.map(item => (
-                  <tr key={item.id} className={`transition-colors ${mostrarOcultos ? "hover:bg-amber-50/40 bg-amber-50/10" : "hover:bg-slate-50/80"}`}>
-                    <td className="p-3 font-bold text-slate-900 whitespace-nowrap">{item.code}</td>
-                    <td className="p-3 font-medium text-slate-600 max-w-[340px] flex items-center justify-between gap-2">
-                      <span>{item.description.toUpperCase()}</span>
-                      {mostrarOcultos ? (
-                        <button onClick={() => reestablecerSku(item.id, item.code)} className="text-slate-400 hover:text-emerald-600 transition-colors flex-shrink-0 ml-1">
-                          <Eye size={13} />
-                        </button>
-                      ) : (
-                        <button onClick={() => deshabilitarYArchivarSku(item.id, item.code)} className="text-slate-800 hover:text-rose-800 transition-colors flex-shrink-0 ml-1">
-                          <EyeOff size={13} />
-                        </button>
-                      )}
-                    </td>
-                    <td className="p-3 text-center font-medium text-slate-800">{item.lead_time}</td>
-                    <td className="p-3 text-right font-semibold text-slate-900">{item.stockFisico.toLocaleString()}</td>
-                    <td className="p-3 text-right font-semibold text-blue-600">
-                      {item.enTránsito > 0 ? (
-                        <span className="bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100 text-[10px] font-medium inline-flex items-center gap-1">
-                          <Ship size={10} /> {item.enTránsito.toLocaleString()}
+                {Object.keys(dataAgrupadaPorFamilia).map((familia) => [
+                  // 1️⃣ FILA SEPARADORA/SUBTÍTULO DE FAMILIA
+                  <tr key={`group-${familia}`} className="bg-slate-100/80 font-bold text-slate-700 tracking-wide">
+                    <td colSpan={10 + mesesHeaders.length} className="p-2.5 pl-4 border-y border-slate-200">
+                      <span className="inline-flex items-center gap-2 text-[11px] uppercase text-slate-900 font-black">
+                        <Layers size={13} className="text-purple-600" />
+                        FAMILIA: {familia} 
+                        <span className="text-[10px] font-normal text-slate-500 normal-case bg-white border border-slate-200 px-2 py-0.5 rounded-full ml-1">
+                          {dataAgrupadaPorFamilia[familia].length} {dataAgrupadaPorFamilia[familia].length === 1 ? 'SKU detectado' : 'SKUs detectados'}
                         </span>
-                      ) : <span className="text-slate-300">-</span>}
+                      </span>
                     </td>
-                    <td className="p-3 text-right bg-purple-50/60 w-48">
-                      <div className="flex flex-col items-end justify-center pr-1">
-                        <span className="font-black text-purple-900 text-xs">
-                          {Math.round(item.consumoIA).toLocaleString()} u/m
-                        </span>
-                        <span className="text-[9px] text-slate-500 font-medium mt-0.5">
-                          Histórico: {Math.round(item.promedioReal).toLocaleString()}
-                        </span>
-                      </div>
-                    </td>
-                    <td className={`p-3 text-center font-bold bg-blue-50/5 ${item.coberturaMeses < 1.0 ? "text-rose-600 font-black" : "text-slate-700"}`}>
-                      {item.coberturaMeses.toFixed(1)} Meses
-                    </td>
-                    <td className={`p-3 text-center font-bold ${item.mesQuiebre !== "OK" ? "text-rose-600 bg-rose-50/30" : "text-emerald-600"}`}>
-                      {item.mesQuiebre}
-                    </td>
-                    <td className="p-3 text-center font-medium">
-                      {item.estado === "COMPRAR YA" ? (
-                        <span className="bg-rose-50 text-rose-700 border border-rose-200 px-2 py-0.5 rounded font-bold text-[10px]">
-                          🚨 {item.fechaLimiteOCStr}
-                        </span>
-                      ) : <span className="text-slate-400">{item.fechaLimiteOCStr}</span>}
-                    </td>
-                    <td className="p-3 text-right font-bold bg-slate-50/50 text-slate-900 w-32">
-                      {item.pedidoSugerido > 0 ? (
-                        <span className="inline-flex items-center gap-1 text-emerald-700 font-bold">
-                          <ArrowDownToLine size={10} className="text-emerald-600" />
-                          {Math.round(item.pedidoSugerido).toLocaleString()}
-                        </span>
-                      ) : <span className="text-slate-400">0</span>}
-                    </td>
+                  </tr>,
+                  // 2️⃣ FILAS DE PRODUCTOS DE ESTA FAMILIA
+                  dataAgrupadaPorFamilia[familia].map((row) => {
+                    let colorAlerta = "bg-emerald-50 text-emerald-700 border-emerald-200";
+                    if (row.estado === "COMPRAR YA") colorAlerta = "bg-red-50 text-red-700 border-red-200 font-bold animate-pulse";
+                    if (row.estado === "POR REVISAR") colorAlerta = "bg-amber-50 text-amber-700 border-amber-200 font-semibold";
+                    if (row.estado === "SIN MOVIMIENTO") colorAlerta = "bg-slate-50 text-slate-400 border-slate-200";
 
-                    {item.proyeccionesPorMes.map((p: any, idx: number) => (
-                      <td key={idx} className="p-3 text-right border-l border-slate-100 whitespace-nowrap bg-slate-50/20 w-32">
-                        <div className="flex flex-col items-end">
-                          <span className={`font-semibold ${p.stockFinal <= 0 ? "text-rose-600 font-bold bg-rose-50 px-1" : "text-slate-800"}`}>
-                            {Math.round(p.stockFinal).toLocaleString()}
-                          </span>
-                          <div className="flex items-center gap-1.5 text-[9px] mt-0.5 text-slate-400 font-mono">
-                            {p.arriboInyectado > 0 && (
-                              <span className="text-emerald-600 font-bold">
-                                +{Math.round(p.arriboInyectado).toLocaleString()}
-                              </span>
+                    return (
+                      <tr key={row.id} className="hover:bg-slate-50/80 group transition-colors whitespace-nowrap">
+                        {/* Código */}
+                        <td className="p-3 font-mono text-slate-900 font-bold">
+                          <div className="flex items-center gap-2">
+                            {row.active ? (
+                              <button 
+                                onClick={() => deshabilitarYArchivarSku(row.id, row.code)}
+                                className="opacity-0 group-hover:opacity-100 p-1 hover:bg-slate-200 rounded transition-all text-slate-400 hover:text-red-600"
+                                title="Archivar SKU"
+                              >
+                                <EyeOff size={12} />
+                              </button>
+                            ) : (
+                              <button 
+                                onClick={() => reestablecerSku(row.id, row.code)}
+                                className="p-1 bg-amber-100 hover:bg-amber-200 rounded text-amber-800 flex items-center gap-1"
+                                title="Restaurar SKU"
+                              >
+                                <Eye size={12} />
+                              </button>
                             )}
-                            <span>↓{Math.round(p.demandaPredicha).toLocaleString()}</span>
+                            <span className={!row.active ? "line-through text-slate-400" : ""}>{row.code}</span>
                           </div>
-                        </div>
-                      </td>
-                    ))}
-                  </tr>
-                ))}
+                        </td>
+
+                        {/* Descripción */}
+                        <td className="p-3 truncate max-w-[340px] font-medium text-slate-600" title={row.description}>
+                          {row.description}
+                        </td>
+
+                        {/* Lead Time */}
+                        <td className="p-3 text-center font-medium text-slate-500">
+                          {row.lead_time}d
+                        </td>
+
+                        {/* Stock Físico */}
+                        <td className="p-3 text-right font-bold text-slate-900 bg-slate-50/40">
+                          {row.stockFisico.toLocaleString()}
+                        </td>
+
+                        {/* Arribos */}
+                        <td className="p-3 text-right font-medium text-blue-600 bg-blue-50/10">
+                          {row.enTránsito > 0 ? (
+                            <span className="inline-flex items-center gap-1">
+                              <Ship size={11} className="text-blue-400" />
+                              {row.enTránsito.toLocaleString()}
+                            </span>
+                          ) : (
+                            <span className="text-slate-300">---</span>
+                          )}
+                        </td>
+
+                        {/* Predicción IA */}
+                        <td className="p-3 text-right font-bold bg-purple-50/40 text-purple-950 border-r border-purple-100">
+                          {row.consumoIA > 0 ? `${Math.round(row.consumoIA).toLocaleString()} u/m` : "0"}
+                        </td>
+
+                        {/* Cobertura */}
+                        <td className="p-3 text-center bg-slate-50/50">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${colorAlerta}`}>
+                            {row.coberturaMeses > 99 ? "∞" : `${row.coberturaMeses.toFixed(1)} m`}
+                          </span>
+                        </td>
+
+                        {/* Mes Quiebre */}
+                        <td className="p-3 text-center font-bold">
+                          {row.mesQuiebre === "OK" ? (
+                            <span className="text-emerald-600 text-[10px] font-black">OK</span>
+                          ) : (
+                            <span className="text-red-600 bg-red-50 px-1.5 py-0.5 rounded text-[10px] font-black border border-red-100">{row.mesQuiebre}</span>
+                          )}
+                        </td>
+
+                        {/* Fecha Límite OC */}
+                        <td className="p-3 text-center font-mono font-semibold text-slate-500">
+                          {row.fechaLimiteOCStr === "---" ? (
+                            <span className="text-slate-300">---</span>
+                          ) : (
+                            <span className={row.estado === "COMPRAR YA" ? "text-red-600 font-bold" : "text-slate-600"}>
+                              {row.fechaLimiteOCStr}
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Sugerido Compra */}
+                        <td className="p-3 text-right font-black bg-emerald-50/30 text-emerald-900 border-r border-slate-200">
+                          {row.pedidoSugerido > 0 ? (
+                            <span className="inline-flex items-center gap-1 text-emerald-700">
+                              <ArrowDownToLine size={12} className="text-emerald-500" />
+                              {Math.round(row.pedidoSugerido).toLocaleString()}
+                            </span>
+                          ) : (
+                            <span className="text-slate-300 font-normal">---</span>
+                          )}
+                        </td>
+
+                        {/* 📅 CELDAS DINÁMICAS DE LOS 12 MESES FUTUROS */}
+                        {row.proyeccionesPorMes.map((mesProj: any, idx: number) => {
+                          const tieneArribo = mesProj.arriboInyectado > 0;
+                          const inventarioCero = mesProj.stockFinal <= 0;
+
+                          return (
+                            <td 
+                              key={`${row.id}-mes-${idx}`} 
+                              className={`p-3 text-right border-l border-slate-100 font-mono transition-all ${
+                                inventarioCero 
+                                  ? "bg-red-50/70 text-red-700 font-bold" 
+                                  : "text-slate-600 font-medium"
+                              }`}
+                            >
+                              <div className="flex flex-col justify-end">
+                                <span>{Math.round(mesProj.stockFinal).toLocaleString()}</span>
+                                {tieneArribo && (
+                                  <span className="text-[9px] text-blue-600 font-bold flex items-center gap-0.5 justify-end mt-0.5" title="Arribo planificado">
+                                    +{Math.round(mesProj.arriboInyectado).toLocaleString()}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })
+                ])}
               </tbody>
             </table>
           </div>

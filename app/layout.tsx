@@ -7,7 +7,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { 
   Truck, Clock, BarChart3, ChevronDown, Menu, 
   CloudUpload, Users, Box, ChevronLeft, LogOut, 
-  Zap, BrainCircuit, LayoutDashboard, PanelLeftClose, PanelLeftOpen
+  Zap, BrainCircuit, LayoutDashboard, PanelLeftClose, PanelLeftOpen, TrendingUp,
+  AlertTriangle, Layers
 } from "lucide-react";
 import "./globals.css";
 // 💡 CORREGIDO: Se usa 'DataProvider' para coincidir con la exportación real
@@ -38,7 +39,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   useEffect(() => {
     const fetchUserData = async () => {
       try {
-        setLoadingUser(true);
+        // 💡 OPTIMIZACIÓN: Intentar cargar los datos guardados en caché primero para evitar pantallas de carga molestas
+        const cachedPerfil = localStorage.getItem("ares_user_perfil");
+        if (cachedPerfil) {
+          setUserPerfil(JSON.parse(cachedPerfil));
+          setLoadingUser(false); // Desactiva la carga de inmediato si ya existe en caché
+        } else {
+          setLoadingUser(true);
+        }
+
         const { data: { user } } = await supabase.auth.getUser();
 
         if (user) {
@@ -48,22 +57,29 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             .eq("id", user.id)
             .maybeSingle();
 
+          let finalPerfil: UsuarioPerfil;
+
           if (perfil && !error) {
-            setUserPerfil(perfil);
+            finalPerfil = perfil;
           } else {
             const nombreFallback = user.user_metadata?.nombre || 
                                    (user.email ? user.email.split("@")[0].toUpperCase() : "Analista Ares");
             
             const esAlber = user.email?.toLowerCase().includes("alber");
 
-            setUserPerfil({
+            finalPerfil = {
               nombre: nombreFallback,
               email: user.email || "",
               rol: esAlber ? "admin" : (user.user_metadata?.rol || "usuario")
-            });
+            };
           }
+
+          // Guardar en el estado y actualizar la caché local de forma silenciosa
+          setUserPerfil(finalPerfil);
+          localStorage.setItem("ares_user_perfil", JSON.stringify(finalPerfil));
         } else {
           setUserPerfil(null);
+          localStorage.removeItem("ares_user_perfil"); // Limpia caché si no hay sesión
           if (!isLoginPage) {
             router.push("/login");
           }
@@ -80,6 +96,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === "SIGNED_OUT") {
         setUserPerfil(null);
+        localStorage.removeItem("ares_user_perfil"); // Limpia la caché al cerrar sesión
         router.push("/login");
       } else if (event === "SIGNED_IN" && session) {
         fetchUserData();
@@ -105,10 +122,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       items: [
         { name: "Dashboard Central", path: "/", icon: <LayoutDashboard size={14}/> },
         { name: "Prediccion", path: "/importaciones/predicciones", icon: <BrainCircuit size={14}/> },
+        { name: "Alertas", path: "/importaciones/alertas", icon: <AlertTriangle size={14} /> },
+        { name: "Kardex", path: "/importaciones/kardex", icon: <Layers size={14} /> },
         { name: "Gestión de Arribos", path: "/importaciones/arribos", icon: <Truck size={14}/> },
         { name: "Monitor Lead Time", path: "/importaciones/lead-time", icon: <Clock size={14}/> },
+        { name: "Consumos Promedios", path: "/importaciones/promedios", icon: <TrendingUp size={14}/> },
         { name: "Cronología", path: "/importaciones/cronologia", icon: <Clock size={14}/> },
-        { name: "Panel de KPIs", path: "/importaciones/kpis", icon: <BarChart3 size={14}/> },
         { name: "Carga de Datos", path: "/importaciones/cargar-datos", icon: <CloudUpload size={14}/> },
       ]
     },
@@ -207,7 +226,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
   return (
     <html lang="es">
-      {/* 💡 CORREGIDO: Se inyecta la etiqueta <head> con el título inicial para evitar destellos con la IP en crudo */}
       <head>
         <title>Ares IA - Planeamiento de Compras</title>
         <meta name="description" content="Sistema de Simulación y Planeamiento de Abastecimiento" />
@@ -311,6 +329,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                         <button 
                           onClick={async () => {
                             await supabase.auth.signOut();
+                            localStorage.removeItem("ares_user_perfil"); // Limpia la caché al cerrar sesión manualmente
                             router.push("/login");
                           }} 
                           title="Cerrar sesión"

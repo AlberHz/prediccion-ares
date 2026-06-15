@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import { useGlobalData } from "@/lib/DataContext"; // Validamos el estado global
 import { 
   BrainCircuit, Truck, BarChart3, Clock, 
-  CloudUpload, ArrowRight, Activity 
+  CloudUpload, ArrowRight, Activity, TrendingUp // 💡 Agregado para el módulo de Consumos Promedios
 } from "lucide-react";
 
 const MotionLink = motion(Link);
@@ -19,6 +19,14 @@ export default function LaunchpadPage() {
       path: "/importaciones/predicciones",
       icon: <BrainCircuit size={20} />,
       badge: "Motor Estadístico"
+    },
+    // 💡 NUEVO MÓDULO INTEGRADO AQUÍ
+    {
+      title: "Consumos Promedios",
+      description: "Cálculo, revisión y ajuste de promedios móviles e históricos para bases de reaprovisionamiento.",
+      path: "/importaciones/promedios", // Coincide exactamente con el sidebar
+      icon: <TrendingUp size={20} />,
+      badge: "Cálculos"
     },
     {
       title: "Gestión de Arribos",

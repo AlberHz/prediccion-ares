@@ -1,16 +1,15 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
-import { Search, LineChart as ChartIcon, ShieldAlert, BarChart3, Eye, ListFilter } from "lucide-react";
+import { Search, LineChart as ChartIcon, ShieldAlert, BarChart3, Eye, Ship } from "lucide-react";
 import { 
   ResponsiveContainer, ComposedChart, Area, Line, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine, Label 
 } from "recharts";
 
-// 🗓️ CONFIGURACIÓN DE FECHA 100% DINÁMICA AUTOMÁTICA
-const fechaActualComputada = new Date();
-const AÑO_ACTUAL = fechaActualComputada.getFullYear(); // Detecta automáticamente el año en curso
-const MES_ACTUAL_NUM = fechaActualComputada.getMonth(); // Detecta dinámicamente el mes real (0 = Ene, 5 = Jun, etc.)
+// 🗓️ CONFIGURACIÓN DE FECHA - JUNIO 2026 COMO MES EN CURSO
+const AÑO_ACTUAL = 2026;
+const MES_ACTUAL_NUM = 5; // Junio (0 = Ene, 5 = Jun)
 
 const DOCUMENTOS_SALIDA = new Set(["NS", "22", "23", "93", "TD"]);
 const NOMBRES_MESES = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"];
@@ -28,9 +27,8 @@ export default function GraficoPredictivoAresIA() {
   const [mostrarDropdown, setMostrarDropdown] = useState(false);
   const [skuSeleccionadoId, setSkuSeleccionadoId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [escenarioVisual, setEscenarioVisual] = useState<"ESTADISTICO" | "NORMAL" | "CRITICO">("ESTADISTICO");
+  const [escenarioVisual, setEscenarioVisual] = useState<"NORMAL" | "ESTADISTICO" | "CRITICO">("ESTADISTICO");
 
-  // Extraer catálogo único de familias para el filtro dinámico
   const listaFamilias = useMemo(() => {
     const fams = new Set<string>();
     productos.forEach(p => { if (p.family) fams.add(p.family); });
@@ -87,6 +85,10 @@ export default function GraficoPredictivoAresIA() {
       });
 
       setProductos(datosConsolidados);
+      if (datosConsolidados.length > 0) {
+        setSkuSeleccionadoId(datosConsolidados[0].id);
+        setBusqueda(`[${datosConsolidados[0].code}] ${datosConsolidados[0].description}`);
+      }
     } catch (err) {
       console.error("Error Ares Engine Base:", err);
     } finally {
@@ -103,79 +105,10 @@ export default function GraficoPredictivoAresIA() {
     const leadTimeDias = item.lead_time;
     const mesesLeadTime = Math.max(1, Math.ceil(leadTimeDias / 30));
 
-    // 1. CONSUMOS HISTÓRICOS REALES (Agrupa de forma segura por Mes-Año)
+    // 1. EXTRACTOR DE SALIDAS REALES HISTÓRICAS
     const todasLasSalidas = item.movimientos.filter(esMovimientoSalida);
-    const historialPorMesAnual: Record<string, number> = {};
-    
-    todasLasSalidas.forEach((m: any) => {
-      const f = m.date ? new Date(m.date) : new Date(m.created_at);
-      const llave = `${f.getFullYear()}-${f.getMonth()}`;
-      historialPorMesAnual[llave] = (historialPorMesAnual[llave] || 0) + Math.abs(Number(m.quantity || 0));
-    });
-
-    const valoresConsumo = Object.values(historialPorMesAnual);
-    const totalMesesActivos = valoresConsumo.length || 1;
-    const sumaTotalUnidades = valoresConsumo.reduce((a, b) => a + b, 0);
-    
-    // Configuración de tasas base predictivas
-    const consumoNormal = sumaTotalUnidades > 0 ? (sumaTotalUnidades / totalMesesActivos) : 100;
-    const varianza = valoresConsumo.reduce((sum, val) => sum + Math.pow(val - consumoNormal, 2), 0) / Math.max(1, totalMesesActivos - 1);
-    const desviacionEstandar = Math.sqrt(varianza || 10);
-    const demandaConIncremento = consumoNormal * 1.25; 
-    const bufferAjustadoIA = (1.28 * desviacionEstandar) > (demandaConIncremento * 0.25) ? (demandaConIncremento * 0.25) : (1.28 * desviacionEstandar);
-    
-    const consumoAresIA = demandaConIncremento + bufferAjustadoIA; 
-    const consumoEstres = consumoAresIA * 1.35;
-
-    const arribosRealesPorMes: Record<number, number> = {};
-    item.arribos.forEach((a: any) => {
-      const f = a.eta_date ? new Date(a.eta_date) : null;
-      if (f && f.getFullYear() === AÑO_ACTUAL) {
-        arribosRealesPorMes[f.getMonth()] = (arribosRealesPorMes[f.getMonth()] || 0) + Number(a.quantity || 0);
-      }
-    });
-
-    // 2. SIMULACIÓN DINÁMICA DE HITOS LOGÍSTICOS
-    const calcularHitosEscenario = (tasaConsumoBase: number) => {
-      let inventarioSimulado = stockFisicoActual;
-      let yaQuebro = false;
-      let mesQuiebre = "OPERATIVO";
-      let mesOC = "AL DÍA";
-      const coeficientesEstacionales = [0.95, 0.90, 1.05, 1.00, 1.10, 1.02, 1.15, 1.18, 1.13, 1.12, 1.15, 1.10];
-
-      const mesesRestantesAño = 12 - MES_ACTUAL_NUM;
-
-      for (let t = 0; t < mesesRestantesAño; t++) {
-        const indiceMes = MES_ACTUAL_NUM + t;
-        const ingresosOC = arribosRealesPorMes[indiceMes] || 0;
-        
-        inventarioSimulado = inventarioSimulado + ingresosOC - (tasaConsumoBase * coeficientesEstacionales[indiceMes]);
-
-        if (inventarioSimulado <= 0 && !yaQuebro) {
-          mesQuiebre = `${NOMBRES_MESES[indiceMes]} '${String(AÑO_ACTUAL).slice(-2)}`;
-          
-          const tiempoCompraEstratégica = t - mesesLeadTime;
-          const idxOC = MES_ACTUAL_NUM + tiempoCompraEstratégica;
-          
-          if (idxOC >= 0) {
-            mesOC = `${NOMBRES_MESES[idxOC]} '${String(AÑO_ACTUAL).slice(-2)}`;
-          } else {
-            mesOC = "RETRASADO";
-          }
-          yaQuebro = true;
-        }
-      }
-      
-      const pedidoSugeridoVolumen = (tasaConsumoBase * mesesLeadTime) * 1.15;
-      return { mesQuiebre, mesOC, pedidoSugerido: Math.round(pedidoSugeridoVolumen) };
-    };
-
-    const hitoNormal = calcularHitosEscenario(consumoNormal);
-    const hitoAresIA = calcularHitosEscenario(consumoAresIA);
-    const hitoEstres = calcularHitosEscenario(consumoEstres);
-
-    // 3. CONSTRUCCIÓN DE LA LÍNEA DE TIEMPO DEL GRÁFICO (DINA-MÓVIL)
     const salidasPorMesAñoActual: Record<number, number> = {};
+    
     todasLasSalidas.forEach((m: any) => {
       const f = m.date ? new Date(m.date) : new Date(m.created_at);
       if (f.getFullYear() === AÑO_ACTUAL) {
@@ -183,65 +116,125 @@ export default function GraficoPredictivoAresIA() {
       }
     });
 
-    const datosCronologicosGrafico: any[] = [];
-    let stockIterativoPasado = stockFisicoActual;
+    // Calcular consumo promedio lineal
+    let sumaPasada = 0;
+    for (let m = 0; m < MES_ACTUAL_NUM; m++) {
+      sumaPasada += (salidasPorMesAñoActual[m] || 0);
+    }
+    const consumoNormal = MES_ACTUAL_NUM > 0 ? (sumaPasada / MES_ACTUAL_NUM) : 100;
+    
+    // ESCENARIOS DE DEMANDA
+    const consumoAresIA = consumoNormal * 1.25;  
+    const consumoEstres = consumoNormal * 1.35;  
 
-    // Pasado Dinámico (Ene hasta mes anterior actual)
+    // Mapeo exhaustivo de arribos (futuros y presentes del año actual)
+    const arribosRealesPorMes: Record<number, number> = {};
+    let totalArribosTransito = 0;
+
+    item.arribos.forEach((a: any) => {
+      const f = a.eta_date ? new Date(a.eta_date) : null;
+      if (f && f.getFullYear() === AÑO_ACTUAL) {
+        const mesArribo = f.getMonth();
+        const cant = Number(a.quantity || 0);
+        arribosRealesPorMes[mesArribo] = (arribosRealesPorMes[mesArribo] || 0) + cant;
+        
+        // Sumamos al KPI si es un arribo programado desde el mes actual en adelante
+        if (mesArribo >= MES_ACTUAL_NUM) {
+          totalArribosTransito += cant;
+        }
+      }
+    });
+
+    // 2. CÁLCULO INVERSO DE HITOS LOGÍSTICOS POR ESCENARIO
+    const calcularHitosEscenario = (tasaConsumoBase: number) => {
+      let inventarioSimulado = stockFisicoActual;
+      let yaQuebro = false;
+      let mesQuiebre = "OPERATIVO";
+      let mesOC = "AL DÍA";
+
+      for (let m = MES_ACTUAL_NUM; m < 12; m++) {
+        const ingresos = arribosRealesPorMes[m] || 0;
+        inventarioSimulado = inventarioSimulado + ingresos - tasaConsumoBase;
+
+        if (inventarioSimulado <= 0 && !yaQuebro) {
+          mesQuiebre = `${NOMBRES_MESES[m]} '26`;
+          const tiempoCompra = (m - MES_ACTUAL_NUM) - mesesLeadTime;
+          const idxOC = MES_ACTUAL_NUM + tiempoCompra;
+          
+          if (idxOC >= MES_ACTUAL_NUM) {
+            mesOC = `${NOMBRES_MESES[idxOC]} '26`;
+          } else {
+            mesOC = "🔴 CRÍTICO";
+          }
+          yaQuebro = true;
+        }
+      }
+      const pedidoSugerido = Math.round(tasaConsumoBase * mesesLeadTime * 1.2);
+      return { mesQuiebre, mesOC, pedidoSugerido };
+    };
+
+    const hitoNormal = calcularHitosEscenario(consumoNormal);
+    const hitoAresIA = calcularHitosEscenario(consumoAresIA);
+    const hitoEstres = calcularHitosEscenario(consumoEstres);
+
+    // 3. RECONSTRUCCIÓN CRONOLÓGICA SIMULTÁNEA DE LA CURVA DEL GRÁFICO
+    const datosCronologicosGrafico: any[] = [];
+    
+    // PASADO HISTÓRICO
+    let stockIterativoPasado = stockFisicoActual;
+    const datosPasadosInvertidos: any[] = [];
+
     for (let m = MES_ACTUAL_NUM - 1; m >= 0; m--) {
-      const salidasReales = salidasPorMesAñoActual[m] || 0;
-      stockIterativoPasado += salidasReales;
-      datosCronologicosGrafico.unshift({
-        mes: `${NOMBRES_MESES[m]} '${String(AÑO_ACTUAL).slice(-2)}`,
-        "Stock Normal": Math.max(0, stockIterativoPasado),
-        "Stock Estadístico (Ares IA)": Math.max(0, stockIterativoPasado),
-        "Stock de Riesgo (Máx)": Math.max(0, stockIterativoPasado),
-        "Consumo Visual": salidasReales, 
-        cantidadArribo: 0
+      const consumoRealMes = salidasPorMesAñoActual[m] || 0;
+      stockIterativoPasado += consumoRealMes;
+
+      datosPasadosInvertidos.unshift({
+        mes: `${NOMBRES_MESES[m]} '26`,
+        "Stock Normal": Math.round(stockIterativoPasado),
+        "Stock Estadístico (Ares IA)": Math.round(stockIterativoPasado),
+        "Stock de Riesgo (Máx)": Math.round(stockIterativoPasado),
+        "Salidas Reales": consumoRealMes,
+        "Línea Promedio": Math.round(consumoNormal),
+        cantidadArribo: arribosRealesPorMes[m] || 0,
+        tipo: "HISTORICO"
       });
     }
+    datosCronologicosGrafico.push(...datosPasadosInvertidos);
 
-    // Futuro Dinámico (Mes actual en curso hasta Diciembre)
+    // FUTURO PREDICTIVO
     let invCorrienteNormal = stockFisicoActual;
     let invCorrienteEstadistico = stockFisicoActual;
     let invCorrienteRiesgo = stockFisicoActual;
-    const coeficientesEstacionales = [0.95, 0.90, 1.05, 1.00, 1.10, 1.02, 1.15, 1.18, 1.13, 1.12, 1.15, 1.10];
 
     for (let m = MES_ACTUAL_NUM; m < 12; m++) {
-      const etiquetaMesAnual = `${NOMBRES_MESES[m]} '${String(AÑO_ACTUAL).slice(-2)}`;
       const ingresosOC = arribosRealesPorMes[m] || 0;
-      const factorEstacional = coeficientesEstacionales[m];
 
-      // 🛠️ SUMAR MOVIMIENTOS REALES DEL MES ACTUAL EN CURSO (JUNIO)
-      const consumoEfectivoMesActual = salidasPorMesAñoActual[m] || 0;
-
-      // Si es el mes en curso, compara qué es mayor: lo que ya consumió o la predicción teórica
-      const consumoNormalAjustado = m === MES_ACTUAL_NUM ? Math.max(consumoEfectivoMesActual, consumoNormal * factorEstacional) : (consumoNormal * factorEstacional);
-      const consumoIAAjustado = m === MES_ACTUAL_NUM ? Math.max(consumoEfectivoMesActual, consumoAresIA * factorEstacional) : (consumoAresIA * factorEstacional);
-      const consumoEstresAjustado = m === MES_ACTUAL_NUM ? Math.max(consumoEfectivoMesActual, consumoEstres * factorEstacional) : (consumoEstres * factorEstacional);
-
-      invCorrienteNormal = invCorrienteNormal + ingresosOC - consumoNormalAjustado;
-      invCorrienteEstadistico = invCorrienteEstadistico + ingresosOC - consumoIAAjustado;
-      invCorrienteRiesgo = invCorrienteRiesgo + ingresosOC - consumoEstresAjustado;
-
-      const consumoElegidoVisual = escenarioVisual === "ESTADISTICO" ? consumoIAAjustado :
-                                   escenarioVisual === "NORMAL" ? consumoNormalAjustado : consumoEstresAjustado;
+      invCorrienteNormal = invCorrienteNormal + ingresosOC - consumoNormal;
+      invCorrienteEstadistico = invCorrienteEstadistico + ingresosOC - consumoAresIA;
+      invCorrienteRiesgo = invCorrienteRiesgo + ingresosOC - consumoEstres;
 
       datosCronologicosGrafico.push({
-        mes: etiquetaMesAnual,
+        mes: `${NOMBRES_MESES[m]} '26`,
         "Stock Normal": Math.round(Math.max(0, invCorrienteNormal)),
         "Stock Estadístico (Ares IA)": Math.round(Math.max(0, invCorrienteEstadistico)),
         "Stock de Riesgo (Máx)": Math.round(Math.max(0, invCorrienteRiesgo)),
-        "Consumo Visual": Math.round(consumoElegidoVisual), 
-        cantidadArribo: ingresosOC
+        "Salidas Reales": undefined,
+        "Línea Promedio": Math.round(
+          escenarioVisual === "NORMAL" ? consumoNormal :
+          escenarioVisual === "ESTADISTICO" ? consumoAresIA : consumoEstres
+        ),
+        cantidadArribo: ingresosOC, // Inyección clave para el mapeo visual
+        tipo: "PREDICTIVO"
       });
     }
 
     const hitoGraficoActivo = escenarioVisual === "ESTADISTICO" ? hitoAresIA : 
-                              escenarioVisual === "NORMAL" ? hitoNormal : hitoEstres;
+                             escenarioVisual === "NORMAL" ? hitoNormal : hitoEstres;
 
     return {
       ...item,
       stockFisicoActual,
+      totalArribosTransito,
       consumoNormal,
       consumoAresIA,
       consumoEstres,
@@ -253,7 +246,6 @@ export default function GraficoPredictivoAresIA() {
     };
   }, [productos, skuSeleccionadoId, escenarioVisual]);
 
-  // Filtro Maestro: Búsqueda dinámica reactiva
   const productosFiltrados = useMemo(() => {
     if (!busqueda.trim() && familiaSeleccionada === "TODAS") return [];
     return productos.filter(p => {
@@ -268,215 +260,175 @@ export default function GraficoPredictivoAresIA() {
     <div className="min-h-[50vh] flex items-center justify-center bg-[#f8fafc]">
       <div className="text-center space-y-3">
         <div className="w-8 h-8 border-2 border-purple-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
-        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sincronizando Base de Datos e Inventarios...</p>
+        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sincronizando Cadena de Suministro...</p>
       </div>
     </div>
   );
 
   return (
-    <div className="bg-[#f8fafc] p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4 w-full mx-auto text-slate-800 antialiased">
+    <div className="bg-[#f8fafc] p-4 sm:p-6 rounded-2xl border border-slate-200 space-y-4 w-full text-slate-800 antialiased">
       
-      {/* SECTOR FILTROS FLEXIBLE */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-3 relative">
+      {/* SECTOR BUSCADOR */}
+      <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-3 relative shadow-xs">
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
-          
-          {/* Caja de Búsqueda de Texto Libre */}
           <div className="md:col-span-8 relative">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-1">Buscador de Materiales</label>
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-1">Buscador Core del Material</label>
             <div className="relative">
               <Search className="absolute left-3 top-2.5 text-slate-400" size={14} />
               <input
                 type="text"
-                placeholder="Escribe el código SKU o descripción para buscar..."
-                className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold outline-none focus:bg-white focus:border-purple-600 transition-all text-slate-900 shadow-xs"
+                placeholder="Escribe el código SKU o descripción..."
+                className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold outline-none focus:bg-white focus:border-purple-600 transition-all text-slate-900"
                 value={busqueda}
                 onChange={(e) => { setBusqueda(e.target.value); setMostrarDropdown(true); }}
                 onFocus={() => setMostrarDropdown(true)}
               />
             </div>
 
-            {/* Listado de Coincidencias Desplegable */}
             {mostrarDropdown && busqueda.trim().length > 0 && (
-              <div className="absolute z-50 w-full left-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl max-h-[230px] overflow-y-auto divide-y divide-slate-100">
-                {productosFiltrados.length > 0 ? (
-                  productosFiltrados.map((p) => (
-                    <div
-                      key={p.id}
-                      className="p-2.5 hover:bg-purple-50/60 cursor-pointer text-xs flex justify-between items-center transition-colors"
-                      onClick={() => {
-                        setSkuSeleccionadoId(p.id);
-                        setBusqueda(`[${p.code}] ${p.description}`);
-                        setMostrarDropdown(false);
-                      }}
-                    >
-                      <div className="truncate pr-4">
-                        <span className="font-bold text-slate-900 mr-2">[{p.code}]</span>
-                        <span className="text-slate-500 uppercase font-medium">{p.description}</span>
-                      </div>
-                      <span className="text-[10px] bg-slate-100 text-slate-600 font-bold px-2 py-0.5 rounded shrink-0 uppercase">
-                        {p.family}
-                      </span>
-                    </div>
-                  ))
-                ) : (
-                  <div className="p-4 text-center text-slate-400 text-[11px] font-semibold uppercase">Ningún ítem coincide con los criterios</div>
-                )}
+              <div className="absolute z-50 w-full left-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl max-h-[200px] overflow-y-auto divide-y divide-slate-100">
+                {productosFiltrados.map((p) => (
+                  <div
+                    key={p.id}
+                    className="p-2.5 hover:bg-purple-50/60 cursor-pointer text-xs flex justify-between items-center"
+                    onClick={() => {
+                      setSkuSeleccionadoId(p.id);
+                      setBusqueda(`[${p.code}] ${p.description}`);
+                      setMostrarDropdown(false);
+                    }}
+                  >
+                    <div className="truncate"><span className="font-bold text-slate-900 mr-2">[{p.code}]</span>{p.description}</div>
+                    <span className="text-[9px] bg-slate-100 text-slate-600 font-bold px-2 py-0.5 rounded uppercase">{p.family}</span>
+                  </div>
+                ))}
               </div>
             )}
           </div>
 
-          {/* Selector Especial por Familia */}
-          <div className="md:col-span-4 relative">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-1">Filtrar por Familia</label>
-            <div className="relative flex items-center">
-              <ListFilter className="absolute left-3 text-slate-400 pointer-events-none" size={14} />
-              <select
-                value={familiaSeleccionada}
-                onChange={(e) => { setFamiliaSeleccionada(e.target.value); if(busqueda.trim()) setMostrarDropdown(true); }}
-                className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold outline-none focus:bg-white focus:border-purple-600 appearance-none text-slate-700 cursor-pointer"
-              >
-                {listaFamilias.map((f, idx) => (
-                  <option key={idx} value={f}>{f === "TODAS" ? "TODAS LAS FAMILIAS" : f}</option>
-                ))}
-              </select>
-              <div className="absolute right-3 pointer-events-none border-l-4 border-r-4 border-t-4 border-transparent border-t-slate-500 w-0 h-0" />
-            </div>
+          <div className="md:col-span-4">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-1">Filtrar Familia</label>
+            <select
+              value={familiaSeleccionada}
+              onChange={(e) => setFamiliaSeleccionada(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold outline-none text-slate-700 cursor-pointer appearance-none"
+            >
+              {listaFamilias.map((f, idx) => (
+                <option key={idx} value={f}>{f === "TODAS" ? "TODAS LAS FAMILIAS" : f}</option>
+              ))}
+            </select>
           </div>
-
         </div>
-        {mostrarDropdown && <div className="fixed inset-0 z-40" onClick={() => setMostrarDropdown(false)} />}
       </div>
 
       {analisisSku ? (
         <>
-          {/* MEDIDORES DE CAPACIDAD DE TASAS MENSUALES */}
+          {/* TARJETAS EJECUTIVAS RESUMEN */}
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-3">
             <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
-              <BarChart3 className="text-slate-800" size={14} />
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900">Configuración Base de Tasas de Salida</h3>
+              <BarChart3 size={14} className="text-slate-900" />
+              <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">Métricas Críticas de Disponibilidad e Importaciones</h3>
             </div>
             
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
-              <div className="bg-emerald-50/40 border border-emerald-100 p-3 rounded-xl">
-                <span className="text-[9px] font-bold text-emerald-700 uppercase tracking-wide block">Stock Físico Real</span>
-                <p className="text-lg font-black text-emerald-900 mt-0.5">{analisisSku.stockFisicoActual.toLocaleString()} <span className="text-xs font-medium text-emerald-600">un.</span></p>
-                <p className="text-[9px] text-emerald-600 mt-1">Disponible en almacén hoy.</p>
+              <div className="bg-slate-900 border border-slate-950 p-3 rounded-xl text-white">
+                <span className="text-[9px] font-bold text-slate-400 uppercase block">Inventario Físico Actual</span>
+                <p className="text-lg font-black mt-0.5">{analisisSku.stockFisicoActual.toLocaleString()} un.</p>
+                <span className="text-[8px] text-slate-400 block font-medium mt-0.5">Stock disponible hoy en bodega</span>
               </div>
 
-              <div className="bg-slate-50 border border-slate-200/60 p-3 rounded-xl">
-                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide block">1. Promedio Comercial</span>
-                <p className="text-lg font-black text-slate-800 mt-0.5">{Math.round(analisisSku.consumoNormal).toLocaleString()} <span className="text-xs font-medium text-slate-500">un/mes</span></p>
-                <p className="text-[9px] text-slate-400 mt-1">Histórico lineal sin protecciones.</p>
+              <div className="bg-emerald-50 border border-emerald-200 p-3 rounded-xl">
+                <span className="text-[9px] font-bold text-emerald-700 uppercase block flex items-center gap-1">
+                  <Ship size={11} className="text-emerald-600" /> Arribos Programados (Tránsito)
+                </span>
+                <p className="text-lg font-black text-emerald-950 mt-0.5">{analisisSku.totalArribosTransito.toLocaleString()} un.</p>
+                <span className="text-[8px] text-emerald-600 block font-medium mt-0.5">Total ingresos esperados H2 2026</span>
               </div>
 
               <div className="bg-purple-50/50 border border-purple-100 p-3 rounded-xl">
-                <span className="text-[9px] font-bold text-purple-600 uppercase tracking-wide block">2. PROMEDIO ESTADÍSTICO</span>
-                <p className="text-lg font-black text-purple-900 mt-0.5">{Math.round(analisisSku.consumoAresIA).toLocaleString()} <span className="text-xs font-medium text-purple-500">un/mes</span></p>
-                <p className="text-[9px] text-purple-600/80 mt-1">Línea base sugerida con colchón.</p>
+                <span className="text-[9px] font-bold text-purple-600 uppercase block">Demanda IA Sugerida (+25%)</span>
+                <p className="text-lg font-black text-purple-900 mt-0.5">{Math.round(analisisSku.consumoAresIA).toLocaleString()} un/mes</p>
+                <span className="text-[8px] text-purple-500 block font-medium mt-0.5">Ritmo mensual estimado de salida</span>
               </div>
 
               <div className="bg-rose-50/50 border border-rose-100 p-3 rounded-xl">
-                <span className="text-[9px] font-bold text-rose-600 uppercase tracking-wide block">3. PROMEDIO MAX</span>
-                <p className="text-lg font-black text-rose-900 mt-0.5">{Math.round(analisisSku.consumoEstres).toLocaleString()} <span className="text-xs font-medium text-slate-500">un/mes</span></p>
-                <p className="text-[9px] text-rose-600/80 mt-1">Simulación ante picos (+35%).</p>
+                <span className="text-[9px] font-bold text-rose-600 uppercase block">Consumo Máximo Estrés (+35%)</span>
+                <p className="text-lg font-black text-rose-900 mt-0.5">{Math.round(analisisSku.consumoEstres).toLocaleString()} un/mes</p>
+                <span className="text-[8px] text-slate-500 block font-medium mt-0.5">Escenario crítico por sobredemanda</span>
               </div>
             </div>
           </div>
 
-          {/* CUADRO MULTI-ESCENARIOS DE ABASTECIMIENTO */}
+          {/* MATRIZ PREDICTIVA DE HITOS POR ESCENARIO */}
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-3">
             <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
               <ShieldAlert size={14} className="text-purple-600" />
-              <h4 className="text-xs font-black uppercase tracking-wider text-slate-900">
-                Matriz de Planificación Inversa y Abastecimiento por Escenarios (Ciclo Móvil Dinámico)
-              </h4>
+              <h4 className="text-xs font-black uppercase tracking-wider text-slate-900">Análisis Predictivo de Hitos de Abastecimiento por Modelo de Consumo</h4>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              {/* Trayectoria Lineal */}
-              <div className="border border-slate-200 rounded-lg p-3 bg-slate-50/50 flex flex-col justify-between">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-[11px]">
+              {/* Bloque Lineal */}
+              <div className="border border-slate-200 rounded-lg p-3 bg-slate-50/40 flex flex-col justify-between">
                 <div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-[10px] font-black text-slate-500 uppercase">1. Trayectoria Lineal</span>
-                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">Consumo Base</span>
+                  <div className="flex justify-between items-center border-b border-slate-200/60 pb-1.5">
+                    <span className="font-black text-slate-600 uppercase text-[9px]">Modelo 1: Lineal Base</span>
+                    <span className="text-[8px] font-bold px-1.5 py-0.2 rounded bg-slate-200 text-slate-700">Consumo Lineal</span>
                   </div>
-                  <div className="grid grid-cols-2 gap-2 mt-2.5 text-[11px]">
-                    <div>
-                      <span className="text-[9px] text-slate-400 block font-bold">FECHA QUIEBRE:</span>
-                      <span className="font-black text-slate-700">{analisisSku.hitoNormal.mesQuiebre}</span>
-                    </div>
-                    <div>
-                      <span className="text-[9px] text-amber-600 block font-bold">COLOCAR OC:</span>
-                      <span className="font-black text-amber-900 bg-amber-100/70 px-1.5 py-0.5 rounded text-[10px]">{analisisSku.hitoNormal.mesOC}</span>
-                    </div>
+                  <div className="space-y-1.5 mt-2">
+                    <div className="flex justify-between"><span className="text-slate-400 font-bold">Quiebre Estimado:</span><span className="font-black text-slate-700">{analisisSku.hitoNormal.mesQuiebre}</span></div>
+                    <div className="flex justify-between items-center"><span className="text-slate-400 font-bold">Lanzamiento OC:</span><span className="font-black text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded text-[10px]">{analisisSku.hitoNormal.mesOC}</span></div>
                   </div>
                 </div>
-                <div className="mt-3 pt-2 border-t border-slate-200 flex justify-between items-center text-[11px]">
-                  <span className="text-slate-400 font-bold">SUGERIDO COMPRA:</span>
-                  <span className="font-black text-slate-900">{analisisSku.hitoNormal.pedidoSugerido.toLocaleString()} un.</span>
+                <div className="mt-3 pt-2 border-t border-slate-200/60 flex justify-between items-center font-black text-slate-900">
+                  <span className="text-slate-400 text-[10px]">Sugerido Compra:</span><span>{analisisSku.hitoNormal.pedidoSugerido.toLocaleString()} un.</span>
                 </div>
               </div>
 
-              {/* Recomendación Ares IA */}
-              <div className="border border-purple-200 rounded-lg p-3 bg-purple-50/30 flex flex-col justify-between relative overflow-hidden">
+              {/* Bloque Ares IA */}
+              <div className="border border-purple-200 rounded-lg p-3 bg-purple-50/20 flex flex-col justify-between">
                 <div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-[10px] font-black text-purple-700 uppercase">2. TRAYECTORIA ESTADISTICA</span>
-                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-100 text-purple-700">Recomendado</span>
+                  <div className="flex justify-between items-center border-b border-purple-200/50 pb-1.5">
+                    <span className="font-black text-purple-700 uppercase text-[9px]">Modelo 2: Ares IA (+25%)</span>
+                    <span className="text-[8px] font-bold px-1.5 py-0.2 rounded bg-purple-100 text-purple-700">Recomendado</span>
                   </div>
-                  <div className="grid grid-cols-2 gap-2 mt-2.5 text-[11px]">
-                    <div>
-                      <span className="text-[9px] text-purple-400 block font-bold">FECHA QUIEBRE:</span>
-                      <span className="font-black text-purple-900">{analisisSku.hitoAresIA.mesQuiebre}</span>
-                    </div>
-                    <div>
-                      <span className="text-[9px] text-amber-700 block font-bold">COLOCAR OC:</span>
-                      <span className="font-black text-amber-900 bg-amber-100 px-1.5 py-0.5 rounded text-[10px] font-extrabold">{analisisSku.hitoAresIA.mesOC}</span>
-                    </div>
+                  <div className="space-y-1.5 mt-2">
+                    <div className="flex justify-between"><span className="text-purple-400 font-bold">Quiebre Estimado:</span><span className="font-black text-purple-900">{analisisSku.hitoAresIA.mesQuiebre}</span></div>
+                    <div className="flex justify-between items-center"><span className="text-purple-400 font-bold">Lanzamiento OC:</span><span className="font-black text-amber-900 bg-amber-100 px-1.5 py-0.5 rounded text-[10px] font-extrabold">{analisisSku.hitoAresIA.mesOC}</span></div>
                   </div>
                 </div>
-                <div className="mt-3 pt-2 border-t border-purple-100 flex justify-between items-center text-[11px]">
-                  <span className="text-purple-500 font-bold">SUGERIDO COMPRA:</span>
-                  <span className="font-black text-purple-900">{analisisSku.hitoAresIA.pedidoSugerido.toLocaleString()} un.</span>
+                <div className="mt-3 pt-2 border-t border-purple-200/50 flex justify-between items-center font-black text-purple-900">
+                  <span className="text-purple-500 text-[10px]">Sugerido Compra:</span><span>{analisisSku.hitoAresIA.pedidoSugerido.toLocaleString()} un.</span>
                 </div>
               </div>
 
-              {/* Demanda Máxima */}
-              <div className="border border-rose-200 rounded-lg p-3 bg-rose-50/30 flex flex-col justify-between">
+              {/* Bloque Demanda Máxima */}
+              <div className="border border-rose-200 rounded-lg p-3 bg-rose-50/20 flex flex-col justify-between">
                 <div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-[10px] font-black text-rose-700 uppercase">3. TRAYECTORIA DEMANDA MAX (+35%)</span>
-                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700">Saturación</span>
+                  <div className="flex justify-between items-center border-b border-rose-200/50 pb-1.5">
+                    <span className="font-black text-rose-700 uppercase text-[9px]">Modelo 3: Estrés Máx (+35%)</span>
+                    <span className="text-[8px] font-bold px-1.5 py-0.2 rounded bg-rose-100 text-rose-700">Riesgo Alto</span>
                   </div>
-                  <div className="grid grid-cols-2 gap-2 mt-2.5 text-[11px]">
-                    <div>
-                      <span className="text-[9px] text-rose-400 block font-bold">FECHA QUIEBRE:</span>
-                      <span className="font-black text-rose-700">{analisisSku.hitoEstres.mesQuiebre}</span>
-                    </div>
-                    <div>
-                      <span className="text-[9px] text-rose-500 block font-bold">OC CRÍTICA:</span>
-                      <span className="font-black text-white bg-rose-600 px-1.5 py-0.5 rounded text-[10px]">{analisisSku.hitoEstres.mesOC}</span>
-                    </div>
+                  <div className="space-y-1.5 mt-2">
+                    <div className="flex justify-between"><span className="text-rose-400 font-bold">Quiebre Estimado:</span><span className="font-black text-rose-700">{analisisSku.hitoEstres.mesQuiebre}</span></div>
+                    <div className="flex justify-between items-center"><span className="text-rose-400 font-bold">Lanzamiento OC:</span><span className="font-black text-white bg-rose-600 px-1.5 py-0.5 rounded text-[10px]">{analisisSku.hitoEstres.mesOC}</span></div>
                   </div>
                 </div>
-                <div className="mt-3 pt-2 border-t border-rose-100 flex justify-between items-center text-[11px]">
-                  <span className="text-rose-500 font-bold">SUGERIDO COMPRA:</span>
-                  <span className="font-black text-rose-900">{analisisSku.hitoEstres.pedidoSugerido.toLocaleString()} un.</span>
+                <div className="mt-3 pt-2 border-t border-rose-200/50 flex justify-between items-center font-black text-rose-900">
+                  <span className="text-rose-500 text-[10px]">Sugerido Compra:</span><span>{analisisSku.hitoEstres.pedidoSugerido.toLocaleString()} un.</span>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* CUADRO DEL GRÁFICO PREDICTIVO */}
-          <div className="bg-white p-4 sm:p-5 rounded-xl border border-slate-200 shadow-xs space-y-3 w-full">
+          {/* CUADRO DEL GRÁFICO PREDICTIVO MULTI-ESCENARIO */}
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-3 w-full">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-slate-100 pb-3 gap-2 text-[11px]">
               <div className="flex items-center gap-2 font-black text-slate-900 uppercase">
                 <ChartIcon size={14} className="text-purple-600" />
-                <span>TRAYECTORIA PredictivA vs Historial</span>
+                <span>Simulador de Inventario Estructurado con Hitos de Abastecimiento</span>
               </div>
               
               <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded border border-slate-200 font-black text-[10px]">
-                <span className="text-slate-400 px-1.5 uppercase flex items-center gap-0.5"><Eye size={11}/> Simular Futuro:</span>
+                <span className="text-slate-400 px-1.5 uppercase flex items-center gap-0.5"><Eye size={11}/> Ajustar Promedio:</span>
                 <button 
                   onClick={() => setEscenarioVisual("NORMAL")}
                   className={`px-2.5 py-0.5 rounded text-[9px] transition-all ${escenarioVisual === "NORMAL" ? "bg-white text-slate-800 shadow-xs" : "text-slate-500"}`}
@@ -487,22 +439,22 @@ export default function GraficoPredictivoAresIA() {
                   onClick={() => setEscenarioVisual("ESTADISTICO")}
                   className={`px-2.5 py-0.5 rounded text-[9px] transition-all ${escenarioVisual === "ESTADISTICO" ? "bg-purple-600 text-white shadow-xs" : "text-slate-500"}`}
                 >
-                  ESTADÍSTICO
+                  ARES IA (+25%)
                 </button>
                 <button 
                   onClick={() => setEscenarioVisual("CRITICO")}
                   className={`px-2.5 py-0.5 rounded text-[9px] transition-all ${escenarioVisual === "CRITICO" ? "bg-rose-600 text-white shadow-xs" : "text-slate-500"}`}
                 >
-                  DEMANDA MAX
+                  MAX (+35%)
                 </button>
               </div>
             </div>
 
-            <div className="w-full h-[380px] text-[9px] font-bold">
+            <div className="w-full h-[390px] text-[9px] font-bold">
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={analisisSku.proyeccionesPorMes} margin={{ top: 20, right: 10, left: -25, bottom: 0 }}>
+                <ComposedChart data={analisisSku.proyeccionesPorMes} margin={{ top: 30, right: 10, left: -25, bottom: 0 }}>
                   <defs>
-                    <linearGradient id="gradientEstadistico" x1="0" y1="0" x2="0" y2="1">
+                    <linearGradient id="gradIA" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.15}/>
                       <stop offset="95%" stopColor="#4f46e5" stopOpacity={0}/>
                     </linearGradient>
@@ -515,37 +467,51 @@ export default function GraficoPredictivoAresIA() {
                   <YAxis yAxisId="right" orientation="right" tickLine={false} stroke="#cbd5e1" />
                   
                   <Tooltip 
-                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '6px', color: '#f8fafc' }}
+                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '8px', color: '#f8fafc' }}
                     itemStyle={{ fontSize: '11px' }}
                   />
                   <Legend verticalAlign="top" height={32} iconType="circle" iconSize={6} wrapperStyle={{ fontSize: '10px', fontWeight: 'black' }} />
                   
-                  <Bar yAxisId="right" dataKey="Consumo Visual" fill="#94a3b8" maxBarSize={24} radius={[3, 3, 0, 0]} opacity={0.4} name="Promedio" />
+                  {/* Histórico de consumo real */}
+                  <Bar yAxisId="right" dataKey="Salidas Reales" fill="#64748b" opacity={0.4} maxBarSize={20} radius={[3, 3, 0, 0]} name="Salidas Reales Históricas" />
 
-                  <Line yAxisId="left" type="monotone" dataKey="Stock de Riesgo (Máx)" stroke="#f43f5e" strokeWidth={1.2} strokeDasharray="4 4" dot={false} name="Trayectoria MAX (+35%)" />
-                  <Line yAxisId="left" type="monotone" dataKey="Stock Normal" stroke="#64748b" strokeWidth={1.2} strokeDasharray="5 2" dot={false} name="Trayectoria Lineal Base" />
-                  <Area yAxisId="left" type="monotone" dataKey="Stock Estadístico (Ares IA)" stroke="#4f46e5" strokeWidth={2.5} fillOpacity={1} fill="url(#gradientEstadistico)" name="Curva Predictiva" dot={{ r: 1.5 }} />
+                  {/* Curva de consumo mensual modelado */}
+                  <Line yAxisId="right" type="monotone" dataKey="Línea Promedio" stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="3 3" dot={false} name="Tasa Consumo Teórico" />
 
-                  {/* LÍNEA GUÍA ORDEN DE COMPRA */}
-                  {analisisSku.hitoGraficoActivo.mesOC !== "AL DÍA" && analisisSku.hitoGraficoActivo.mesOC !== "RETRASADO" && (
+                  {/* Curvas de proyección multi-escenario del inventario */}
+                  <Line yAxisId="left" type="monotone" dataKey="Stock Normal" stroke="#cbd5e1" strokeWidth={1.3} strokeDasharray="4 4" dot={false} name="Trayectoria Lineal" />
+                  <Line yAxisId="left" type="monotone" dataKey="Stock de Riesgo (Máx)" stroke="#f43f5e" strokeWidth={1.3} strokeDasharray="4 2" dot={false} name="Trayectoria Máx Riesgo" />
+                  <Area yAxisId="left" type="monotone" dataKey="Stock Estadístico (Ares IA)" stroke="#4f46e5" strokeWidth={2.5} fillOpacity={1} fill="url(#gradIA)" name="Trayectoria Predictiva Ares IA" dot={{ r: 2 }} />
+
+                  {/* 🚚 HITOS VISUALES DINÁMICOS EN EL GRÁFICO */}
+
+                  {/* 1. Lanzamiento de Orden de Compra */}
+                  {analisisSku.hitoGraficoActivo.mesOC !== "AL DÍA" && analisisSku.hitoGraficoActivo.mesOC !== "🔴 CRÍTICO" && (
                     <ReferenceLine yAxisId="left" x={analisisSku.hitoGraficoActivo.mesOC} stroke="#d97706" strokeWidth={2} strokeDasharray="4 3">
-                      <Label value={`COLOCAR OC: ${analisisSku.hitoGraficoActivo.mesOC}`} position="top" fill="#b45309" fontSize={8} fontWeight="black" />
+                      <Label value={`⚠️ EMITIR OC`} position="top" fill="#b45309" fontSize={9} fontWeight="black" />
                     </ReferenceLine>
                   )}
 
-                  {/* LÍNEA GUÍA QUIEBRE DE STOCK */}
+                  {/* 2. Quiebre de Inventario */}
                   {analisisSku.hitoGraficoActivo.mesQuiebre !== "OPERATIVO" && (
-                    <ReferenceLine yAxisId="left" x={analisisSku.hitoGraficoActivo.mesQuiebre} stroke="#ef4444" strokeWidth={2}>
-                      <Label value={`QUIEBRE STOCK: ${analisisSku.hitoGraficoActivo.mesQuiebre}`} position="top" fill="#ef4444" fontSize={8} fontWeight="black" />
+                    <ReferenceLine yAxisId="left" x={analisisSku.hitoGraficoActivo.mesQuiebre} stroke="#ef4444" strokeWidth={2.5}>
+                      <Label value={`🚨 QUIEBRE ESTIMADO`} position="top" fill="#ef4444" fontSize={9} fontWeight="black" />
                     </ReferenceLine>
                   )}
 
-                  {/* Marcadores de Arribos */}
+                  {/* 3. Arribos e Inyecciones de Stock Mapeadas en su respectivo Mes */}
                   {analisisSku.proyeccionesPorMes.map((p: any, idx: number) => {
                     if (p.cantidadArribo > 0) {
                       return (
-                        <ReferenceLine key={`arribo-${idx}`} yAxisId="left" x={p.mes} stroke="#10b981" strokeWidth={1.5}>
-                          <Label value={`ARRIVO: +${p.cantidadArribo.toLocaleString()} un.`} position="insideTopLeft" fill="#047857" fontSize={8} fontWeight="black" />
+                        <ReferenceLine key={`arribo-grafico-${idx}`} yAxisId="left" x={p.mes} stroke="#10b981" strokeWidth={2} strokeDasharray="3 2">
+                          <Label 
+                            value={`🚢 ARRIBO: +${p.cantidadArribo.toLocaleString()}`} 
+                            position="insideTop" 
+                            offset={15}
+                            fill="#047857" 
+                            fontSize={8} 
+                            fontWeight="black" 
+                          />
                         </ReferenceLine>
                       );
                     }
@@ -558,7 +524,7 @@ export default function GraficoPredictivoAresIA() {
         </>
       ) : (
         <div className="text-center py-20 text-slate-400 text-xs font-semibold uppercase tracking-wider bg-white rounded-xl border border-slate-200">
-          Usa los controles superiores para buscar un SKU e inicializar las simulaciones.
+          Selecciona un SKU en los filtros superiores para iniciar el análisis predictivo.
         </div>
       )}
     </div>

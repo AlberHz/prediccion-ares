@@ -64,38 +64,79 @@ export default function CargarDatosPage() {
       let mensajeExito = "Sincronización Exitosa: ";
 
       // ==========================================
-      // BLOQUE A: Actualización de Stock y Costo (PROTEGE LEAD TIMES)
+      // BLOQUE A: Actualización selectiva de Catálogo (Stock y Familia vs Producto Nuevo)
       // ==========================================
       if (dataStock.length > 0) {
-        const productsToUpsert = dataStock.map(item => ({
-          user_id: user.id,
-          code: String(item.code).trim(),
-          description: item.description,
-          stock: item.stock,            
-          unit: item.unit,
-          family: item.family,
-          cost: item.cost,
-          currency: "USD"
-          // Se quitó lead_time de aquí para evitar sobreescrituras accidentales
-        }));
+        const codigosSubidos = dataStock.map(item => String(item.code).trim());
 
-        const { error: stockError } = await supabase
+        // Identificar qué productos ya existen en Supabase para este usuario específico
+        const { data: productosExistentes, error: fetchExistentesError } = await supabase
           .from("products")
-          .upsert(productsToUpsert, { 
-            onConflict: "user_id,code",
-            ignoreDuplicates: false 
-          });
+          .select("code")
+          .eq("user_id", user.id)
+          .in("code", codigosSubidos);
 
-        if (stockError) {
-          throw new Error(`Fallo en actualización de Catálogo: ${stockError.message}. Verifica si creaste el índice único en la base de datos.`);
+        if (fetchExistentesError) throw new Error(`Error al verificar duplicados: ${fetchExistentesError.message}`);
+
+        const setExistentes = new Set(productosExistentes?.map(p => String(p.code).trim()) || []);
+
+        const productosNuevosToInsert: any[] = [];
+        const productosExistentesToUpdate: any[] = [];
+
+        dataStock.forEach(item => {
+          const codigoLimpio = String(item.code).trim();
+          
+          if (setExistentes.has(codigoLimpio)) {
+            // REQUERIMIENTO 1: Si ya existe en la Base de Datos, SOLO modificamos stock y familia
+            productosExistentesToUpdate.push({
+              user_id: user.id,
+              code: codigoLimpio,
+              stock: item.stock,
+              family: item.family
+            });
+          } else {
+            // REQUERIMIENTO 1: Si es un producto NUEVO, se insertan todos los campos (Sin incluir costo)
+            productosNuevosToInsert.push({
+              user_id: user.id,
+              code: codigoLimpio,
+              description: item.description,
+              stock: item.stock,            
+              unit: item.unit,
+              family: item.family,
+              currency: "USD"
+            });
+          }
+        });
+
+        // Inyección de ítems completamente nuevos
+        if (productosNuevosToInsert.length > 0) {
+          const { error: insertError } = await supabase
+            .from("products")
+            .insert(productosNuevosToInsert);
+
+          if (insertError) throw new Error(`Fallo al registrar productos nuevos: ${insertError.message}`);
         }
-        mensajeExito += `[${dataStock.length} SKUs actualizados correctamente] `;
+
+        // Actualización parcial controlada de ítems existentes
+        if (productosExistentesToUpdate.length > 0) {
+          const { error: updateError } = await supabase
+            .from("products")
+            .upsert(productosExistentesToUpdate, {
+              onConflict: "user_id,code",
+              ignoreDuplicates: false
+            });
+
+          if (updateError) throw new Error(`Fallo al actualizar stock/familia del catálogo: ${updateError.message}`);
+        }
+
+        mensajeExito += `[${productosNuevosToInsert.length} SKUs creados, ${productosExistentesToUpdate.length} Stocks/Familias actualizados] `;
       }
 
       // ==========================================
-      // BLOQUE B: Inyección Masiva de Movimientos (INSERT)
+      // BLOQUE B: Inyección Masiva de Movimientos (FILTRADO POR MAESTRO Y SUBIDA DIRECTA)
       // ==========================================
       if (dataMovements.length > 0) {
+        // Traemos todo el catálogo actual del usuario desde Supabase
         const { data: userProducts, error: fetchError } = await supabase
           .from("products")
           .select("id, code")
@@ -107,6 +148,7 @@ export default function CargarDatosPage() {
           userProducts?.map(p => [String(p.code).trim(), p.id]) || []
         );
 
+        // REQUERIMIENTO MODIFICADO: Filtra y mapea solo los movimientos cuyo código exista en el mapa. El resto se ignora.
         const movementsToInsert = dataMovements
           .filter(item => productMap.has(String(item.code).trim())) 
           .map(item => ({
@@ -119,16 +161,17 @@ export default function CargarDatosPage() {
             description: item.description 
           }));
 
-        if (movementsToInsert.length === 0) {
-          throw new Error("Carga abortada: Ningún código del archivo de movimientos coincide con los SKUs del Maestro.");
+        // Si después de filtrar no queda ningún movimiento válido, avisamos de manera limpia en vez de romper el flujo
+        if (movementsToInsert.length > 0) {
+          const { error: insertError } = await supabase
+            .from("movements")
+            .insert(movementsToInsert);
+
+          if (insertError) throw new Error(`Fallo en Kardex: ${insertError.message}`);
+          mensajeExito += `[${movementsToInsert.length} nuevos movimientos inyectados]`;
+        } else {
+          mensajeExito += `[0 movimientos nuevos: no coincidieron códigos con el Maestro]`;
         }
-
-        const { error: insertError } = await supabase
-          .from("movements")
-          .insert(movementsToInsert);
-
-        if (insertError) throw new Error(`Fallo en Kardex: ${insertError.message}`);
-        mensajeExito += `[${movementsToInsert.length} nuevos movimientos inyectados]`;
       }
 
       setStatus({ type: "success", msg: mensajeExito });
@@ -141,6 +184,7 @@ export default function CargarDatosPage() {
       console.error("Error en Inyección:", error);
       setStatus({ type: "error", msg: error.message });
     } finally {
+      loading;
       setLoading(false);
     }
   };
@@ -159,11 +203,11 @@ export default function CargarDatosPage() {
           <div>
             <div className="flex items-center gap-2 mb-2">
               <Box size={16} className="text-slate-600" />
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600">1. Reporte de Catálogo (Actualizar Stock y Costo)</h3>
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600">1. Reporte de Catálogo (Actualizar Stock y Familia)</h3>
             </div>
             <p className="text-[11px] text-slate-400 font-medium leading-relaxed mb-5">
-              Requerido para sobreescribir los inventarios base y costos actuales. <br />
-              Columnas: <span className="font-mono text-slate-500 text-[10px]">CODIGO, DESCRIPCIÓN, STOCK, UND, FAMILIA, COSTO</span>
+              Requerido para sobreescribir los inventarios base y familias de forma segura. <br />
+              Columnas: <span className="font-mono text-slate-500 text-[10px]">CODIGO, DESCRIPCIÓN, STOCK, UND, FAMILIA</span>
             </p>
           </div>
           
