@@ -124,6 +124,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         { name: "Prediccion", path: "/importaciones/predicciones", icon: <BrainCircuit size={14}/> },
         { name: "Alertas", path: "/importaciones/alertas", icon: <AlertTriangle size={14} /> },
         { name: "Kardex", path: "/importaciones/kardex", icon: <Layers size={14} /> },
+        { name: "Grafico predictivo", path: "/importaciones/kpis", icon: <BarChart3 size={14} /> },
         { name: "Gestión de Arribos", path: "/importaciones/arribos", icon: <Truck size={14}/> },
         { name: "Monitor Lead Time", path: "/importaciones/lead-time", icon: <Clock size={14}/> },
         { name: "Consumos Promedios", path: "/importaciones/promedios", icon: <TrendingUp size={14}/> },
