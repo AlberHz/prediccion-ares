@@ -230,7 +230,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         <title>Ares IA - Planeamiento de Compras</title>
         <meta name="description" content="Sistema de Simulación y Planeamiento de Abastecimiento" />
-        <link rel="icon" href="/favicon.ico" />
+        <link rel="icon" href="/icon.png" />
       </head>
       <body className="bg-white text-slate-900 min-h-screen overflow-hidden font-sans antialiased selection:bg-slate-100">
         <DataProvider>
