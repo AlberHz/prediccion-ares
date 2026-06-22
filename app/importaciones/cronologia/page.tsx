@@ -4,16 +4,8 @@ import { supabase } from "@/lib/supabase";
 import { Search, ShoppingCart, ArrowRight, FileSpreadsheet, LineChart as ChartIcon, AlertTriangle, CheckCircle2, Clock } from "lucide-react";
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, Label } from "recharts";
 
-const AÑO_ACTUAL = 2026;
-const MES_ACTUAL_NUM = 5; // Junio 2026 (0-indexed = 5)
-const DOCUMENTOS_SALIDA = new Set(["NS", "22", "23", "93", "TD"]);
+const DOCUMENTOS_SALIDA = ["NS", "22", "23", "93", "TD"];
 const NOMBRES_MESES = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"];
-
-const esMovimientoSalida = (m: any) => {
-  const t = String(m.type || "").trim().toUpperCase();
-  const c = String(m.transaction_code || "").trim().toUpperCase();
-  return DOCUMENTOS_SALIDA.has(t) || DOCUMENTOS_SALIDA.has(c);
-};
 
 export default function PlanificadorAbastecimientoAres() {
   const [productos, setProductos] = useState<any[]>([]);
@@ -23,6 +15,11 @@ export default function PlanificadorAbastecimientoAres() {
   const [loading, setLoading] = useState(true);
   const [filtroCriticidad, setFiltroCriticidad] = useState<string>("TODOS");
 
+  // 🗓️ CONFIGURACIÓN DE FECHA DINÁMICA DE REFERENCIA (Alineado con Predicciones)
+  const fechaActualComputada = useMemo(() => new Date(), []);
+  const AÑO_ACTUAL = fechaActualComputada.getFullYear(); 
+  const MES_ACTUAL_JS = fechaActualComputada.getMonth(); 
+
   useEffect(() => {
     fetchDataReal();
   }, []);
@@ -30,12 +27,16 @@ export default function PlanificadorAbastecimientoAres() {
   async function fetchDataReal() {
     setLoading(true);
     try {
-      const { data: dbProducts } = await supabase
+      // 🟢 FILTRAR SÓLO SKUS ACTIVOS
+      const { data: dbProducts, error: errProd } = await supabase
         .from("products")
-        .select("id, code, description, family, lead_time, stock, custom_average_consumption, active")
+        .select("id, code, description, family, lead_time, stock, active, custom_average_consumption")
         .eq("active", true);
 
-      const { data: dbArrivals } = await supabase.from("arrivals").select("*");
+      const { data: dbArrivals, error: errArr } = await supabase.from("arrivals").select("*");
+
+      if (errProd) throw errProd;
+      if (errArr) throw errArr;
 
       let todosLosMovimientos: any[] = [];
       let desde = 0;
@@ -43,7 +44,8 @@ export default function PlanificadorAbastecimientoAres() {
       let tieneMas = true;
 
       while (tieneMas) {
-        const { data: chunk } = await supabase.from("movements").select("*").range(desde, hasta);
+        const { data: chunk, error: errMov } = await supabase.from("movements").select("*").range(desde, hasta);
+        if (errMov) throw errMov;
         if (chunk && chunk.length > 0) {
           todosLosMovimientos = [...todosLosMovimientos, ...chunk];
           if (chunk.length < 1000) tieneMas = false;
@@ -51,20 +53,11 @@ export default function PlanificadorAbastecimientoAres() {
         } else { tieneMas = false; }
       }
 
-      const movsByProduct: Record<string, any[]> = {};
-      todosLosMovimientos.forEach(m => {
-        if (!movsByProduct[m.product_id]) movsByProduct[m.product_id] = [];
-        movsByProduct[m.product_id].push(m);
-      });
-
-      const arrivalsByProduct: Record<string, any[]> = {};
-      (dbArrivals || []).forEach(a => {
-        if (!arrivalsByProduct[a.product_id]) arrivalsByProduct[a.product_id] = [];
-        arrivalsByProduct[a.product_id].push(a);
-      });
-
       const datosConsolidados = (dbProducts || []).map((p: any) => {
         const productUUID = p.id;
+        const historialDelSku = todosLosMovimientos.filter((m: any) => m.product_id === productUUID);
+        const arribosDelSku = dbArrivals ? dbArrivals.filter((a: any) => a.product_id === productUUID && a.status === "PENDIENTE") : [];
+
         return {
           id: productUUID,
           code: p.code ? String(p.code).trim() : "SIN CÓDIGO",
@@ -73,8 +66,8 @@ export default function PlanificadorAbastecimientoAres() {
           lead_time: parseInt(p.lead_time) || 0,
           stockFisicoActual: Number(p.stock || 0),
           custom_average_consumption: parseInt(p.custom_average_consumption) || 0,
-          movimientos: movsByProduct[productUUID] || [],
-          arribos: arrivalsByProduct[productUUID] || []
+          movimientos: historialDelSku,
+          arribos: arribosDelSku
         };
       });
 
@@ -84,52 +77,74 @@ export default function PlanificadorAbastecimientoAres() {
         setBusqueda(`[${datosConsolidados[0].code}] ${datosConsolidados[0].description}`);
       }
     } catch (err) {
-      console.error("Error base de datos:", err);
+      console.error("Error sincronizando base de datos Ares:", err);
     } finally {
       setLoading(false);
     }
   }
 
-  // --- EXPLOSIÓN DE REQUERIMIENTOS (MRP LÍNEA POR OC) ---
+  // --- EXPLOSIÓN DE REQUERIMIENTOS CON LÓGICA DE PREDICCIONES (PROMEDIO + 25% GLOBAL) ---
   const analisisAbastecimiento = useMemo(() => {
     const listadoMaestroOCs: any[] = [];
     const curvasPorProducto: Record<string, any[]> = {};
 
+    // Cabeceras de simulación de 12 meses idéntico a predicciones
+    const mesesHeaders: any[] = [];
+    for (let i = 0; i < 12; i++) {
+      const fFutura = new Date(AÑO_ACTUAL, MES_ACTUAL_JS + i, 1);
+      mesesHeaders.push({ mNum: fFutura.getMonth(), aNum: fFutura.getFullYear() });
+    }
+
     productos.forEach((item) => {
-      const stockFisicoActual = Number(item.stockFisicoActual || 0);
-      const leadTimeDias = parseInt(item.lead_time) || 0;
-      const mesesLeadTime = Math.max(1, Math.ceil(leadTimeDias / 30));
+      const stockFisicoActual = item.stockFisicoActual;
+      const leadTimeDias = item.lead_time;
+      const leadTimeMeses = leadTimeDias / 30;
 
-      let promedioConsumo = 0;
-      if (item.custom_average_consumption > 0) {
-        promedioConsumo = item.custom_average_consumption;
-      } else {
-        const todasLasSalidas = item.movimientos.filter(esMovimientoSalida);
-        const unidadesTotalesSalida = todasLasSalidas.reduce((sum: number, curr: any) => sum + Math.abs(Number(curr.quantity || 0)), 0);
-        const mesesConActividad = new Set(todasLasSalidas.map((m: any) => {
-          const f = m.date ? new Date(m.date) : new Date(m.created_at);
-          return `${f.getFullYear()}-${f.getMonth()}`;
-        })).size || 1;
-        promedioConsumo = unidadesTotalesSalida / mesesConActividad;
-      }
-
-      // Reconstrucción del pasado para gráficos
-      const salidasPorMesAñoActual: Record<number, number> = {};
-      item.movimientos.forEach((mvs: any) => {
-        const fecha = new Date(mvs.date || mvs.created_at);
-        if (fecha.getFullYear() === AÑO_ACTUAL && esMovimientoSalida(mvs)) {
-          const mes = fecha.getMonth();
-          salidasPorMesAñoActual[mes] = (salidasPorMesAñoActual[mes] || 0) + Math.abs(Number(mvs.quantity || 0));
-        }
+      const salidasValidas = item.movimientos.filter((m: any) => {
+        const tipoDoc = String(m.type || "").trim().toUpperCase();
+        const codTrans = String(m.transaction_code || "").trim().toUpperCase();
+        return DOCUMENTOS_SALIDA.includes(tipoDoc) || DOCUMENTOS_SALIDA.includes(codTrans);
       });
 
+      const historialPorMes: { [key: string]: number } = {};
+      salidasValidas.forEach((m: any) => {
+        const fechaObj = m.date ? new Date(m.date) : new Date(m.created_at);
+        const llaveMes = `${fechaObj.getFullYear()}-${fechaObj.getMonth()}`;
+        historialPorMes[llaveMes] = (historialPorMes[llaveMes] || 0) + Math.abs(Number(m.quantity || 0));
+      });
+
+      const cantidadesMensuales = Object.values(historialPorMes);
+      const totalMesesPeriodo = cantidadesMensuales.length > 0 ? cantidadesMensuales.length : 1;
+      const unidadesTotalesSalida = cantidadesMensuales.reduce((sum, val) => sum + val, 0);
+
+      // 🌟 REGLA DE CONSUMO IA (PROMEDIO + INCREMENTO ~25% MEDIANTE VARIANZA)
+      const promedioMensualReal = item.custom_average_consumption > 0 
+        ? item.custom_average_consumption 
+        : (unidadesTotalesSalida / totalMesesPeriodo);
+
+      const varianza = cantidadesMensuales.length > 1
+        ? cantidadesMensuales.reduce((sum, val) => sum + Math.pow(val - promedioMensualReal, 2), 0) / (cantidadesMensuales.length - 1)
+        : 0;
+      const desviaciónEstandar = Math.sqrt(varianza);
+
+      const demandaConIncremento = promedioMensualReal * 1.20; 
+      let factorTendenciaAlcista5 = 1.28 * desviaciónEstandar;
+      const colchonMaximoPermitido = demandaConIncremento * 0.25;
+      if (factorTendenciaAlcista5 > colchonMaximoPermitido) {
+        factorTendenciaAlcista5 = colchonMaximoPermitido;
+      }
+
+      const demandaPredichaFinal = promedioMensualReal > 0 ? demandaConIncremento + factorTendenciaAlcista5 : 0;
+      const loteSugeridoEstandar = demandaPredichaFinal > 0 ? (demandaPredichaFinal * leadTimeMeses) * 1.15 : 0;
+
+      // Reconstrucción del Pasado para Gráfico
       const datosCronologicosGrafico: any[] = [];
       let stockIterativoPasado = stockFisicoActual;
-      for (let m = MES_ACTUAL_NUM - 1; m >= 0; m--) {
-        const salidasReales = salidasPorMesAñoActual[m] || 0;
+      for (let m = MES_ACTUAL_JS - 1; m >= Math.max(0, MES_ACTUAL_JS - 4); m--) {
+        const salidasReales = historialPorMes[`${AÑO_ACTUAL}-${m}`] || 0;
         stockIterativoPasado += salidasReales;
         datosCronologicosGrafico.unshift({ 
-          mes: `${NOMBRES_MESES[m]} 26`, 
+          mes: `${NOMBRES_MESES[m]} '${String(AÑO_ACTUAL).slice(-2)}`, 
           stockProyectado: Math.max(0, stockIterativoPasado), 
           velocidadConsumo: salidasReales, 
           cantidadArribo: 0,
@@ -137,59 +152,54 @@ export default function PlanificadorAbastecimientoAres() {
         });
       }
 
-      const arribosRealesPorMes: Record<number, number> = {};
-      item.arribos.forEach((a: any) => {
-        const f = a.eta_date ? new Date(a.eta_date) : null;
-        if (f && f.getFullYear() === AÑO_ACTUAL) {
-          const mes = f.getMonth();
-          arribosRealesPorMes[mes] = (arribosRealesPorMes[mes] || 0) + Number(a.quantity || 0);
-        }
-      });
-
-      // Simulación de línea de tiempo hacia el futuro (24 meses de ventana rodante)
-      let inventarioCorriente = stockFisicoActual;
+      // Simulación de Línea de Tiempo hacia el Futuro (Ventana de 12 meses de predicciones)
+      let stockSimulado = stockFisicoActual;
       let contadorOC = 0;
-      const loteSugeridoEstandar = Math.round((promedioConsumo * mesesLeadTime) + (promedioConsumo * 3)) || 100;
       const ocsDelProducto: any[] = [];
 
-      if (promedioConsumo > 0) {
-        for (let t = 0; t < 24; t++) {
-          const indiceMesAbsoluto = (MES_ACTUAL_NUM + t) % 12;
-          const añoSimulado = AÑO_ACTUAL + Math.floor((MES_ACTUAL_NUM + t) / 12);
-          const etiquetaMesAnual = `${NOMBRES_MESES[indiceMesAbsoluto]} ${añoSimulado === 2026 ? "26" : "27"}`;
+      if (demandaPredichaFinal > 0) {
+        mesesHeaders.forEach((m, idx) => {
+          const arribosEsteMes = item.arribos.filter((a: any) => {
+            const fechaEta = a.eta_date ? new Date(a.eta_date) : null;
+            return fechaEta && fechaEta.getMonth() === m.mNum && fechaEta.getFullYear() === m.aNum;
+          });
+          const entradasOCReales = arribosEsteMes.reduce((sum: number, curr: any) => sum + Number(curr.quantity || 0), 0);
 
-          // Sumar arribos programados reales en base de datos
-          if (añoSimulado === 2026) {
-            inventarioCorriente += (arribosRealesPorMes[indiceMesAbsoluto] || 0);
-          }
+          // Sumar arribos reales del mes en curso simulado
+          stockSimulado += entradasOCReales;
 
-          // Sumar ingresos de OCs sugeridas previas que ya debieron llegar en este mes de la simulación
+          // Sumar ingresos simulación de OCs calculadas en iteraciones previas que llegan ESTE mes
           const ingresosDeOcSimuladas = ocsDelProducto
-            .filter(o => o.mesAbsolutoArribo === t)
+            .filter(o => o.mesAbsolutoArribo === idx)
             .reduce((sum, curr) => sum + curr.cantidadAComprar, 0);
-          
-          inventarioCorriente += ingresosDeOcSimuladas;
+          stockSimulado += ingresosDeOcSimuladas;
 
-          // Restar el consumo esperado del mes
-          inventarioCorriente -= promedioConsumo;
+          // Restar Consumo Esperado
+          const llaveMesActual = `${m.aNum}-${m.mNum}`;
+          const consumosEfectivosReales = historialPorMes[llaveMesActual] || 0;
+          const demandaEfectivaEsteMes = (m.mNum === MES_ACTUAL_JS && m.aNum === AÑO_ACTUAL)
+            ? Math.max(consumosEfectivosReales, demandaPredichaFinal)
+            : demandaPredichaFinal;
 
-          // GATILLO DE QUIEBRE DE STOCK
-          if (inventarioCorriente <= 0) {
+          stockSimulado -= demandaEfectivaEsteMes;
+
+          // 🚨 GATILLO DE QUIEBRE: SI CAE A 0 O MENOS, EMITIMOS OC PARA SALVAR EL MES
+          if (stockSimulado <= 0) {
             contadorOC++;
-            const mesAbsolutoLanzamiento = t - mesesLeadTime;
             
-            let etiquetaLanzamiento = "";
+            // LÓGICA DE EMISIÓN: 1 mes antes del Quiebre menos el Lead Time
+            const fechaQuiebreEstimada = new Date(m.aNum, m.mNum, 1);
+            const fechaLimiteOC = new Date(fechaQuiebreEstimada);
+            fechaLimiteOC.setDate(fechaLimiteOC.getDate() - leadTimeDias - 30); // Resta los días de leadtime + 30 días (1 mes antes)
+
+            let etiquetaLanzamiento = fechaLimiteOC.toLocaleDateString('es-ES', { month: 'short', year: '2-digit' }).toUpperCase();
             let criticidad = "PLANIFICADO";
 
-            if (mesAbsolutoLanzamiento <= 0) {
-              // Significa que debió lanzarse antes de Junio 2026 para llegar a tiempo
-              etiquetaLanzamiento = `INMEDIATO (Debió ser en ${NOMBRES_MESES[(MES_ACTUAL_NUM + mesAbsolutoLanzamiento + 12) % 12]} 26)`;
+            if (fechaLimiteOC <= fechaActualComputada) {
+              etiquetaLanzamiento = `IMMEDIATO (Debió ser ${NOMBRES_MESES[fechaLimiteOC.getMonth()]} '${String(fechaLimiteOC.getFullYear()).slice(-2)})`;
               criticidad = "CRITICO";
-            } else {
-              const idxLanzamiento = (MES_ACTUAL_NUM + mesAbsolutoLanzamiento) % 12;
-              const añoLanzamiento = AÑO_ACTUAL + Math.floor((MES_ACTUAL_NUM + mesAbsolutoLanzamiento) / 12);
-              etiquetaLanzamiento = `${NOMBRES_MESES[idxLanzamiento]} ${añoLanzamiento === 2026 ? '26' : '27'}`;
-              criticidad = añoLanzamiento === 2026 ? "PLANIFICADO" : "FUTURO";
+            } else if (fechaLimiteOC.getFullYear() > AÑO_ACTUAL) {
+              criticidad = "FUTURO";
             }
 
             const nuevaOC = {
@@ -199,12 +209,12 @@ export default function PlanificadorAbastecimientoAres() {
               description: item.description,
               family: item.family,
               stockInicialFisico: stockFisicoActual,
-              promedioConsumo: Math.round(promedioConsumo),
+              promedioConsumo: Math.round(demandaPredichaFinal),
               numeroOrdenTexto: `OC #${contadorOC}`,
-              mesQuiebreTexto: etiquetaMesAnual,
+              mesQuiebreTexto: `${NOMBRES_MESES[m.mNum]} '${String(m.aNum).slice(-2)}`,
               mesLanzamientoTexto: etiquetaLanzamiento,
-              mesAbsolutoArribo: t,
-              cantidadAComprar: loteSugeridoEstandar,
+              mesAbsolutoArribo: idx, // Llega exactamente en el mes de quiebre para salvarlo
+              cantidadAComprar: Math.round(loteSugeridoEstandar),
               leadTimeDias,
               criticidad
             };
@@ -212,25 +222,22 @@ export default function PlanificadorAbastecimientoAres() {
             ocsDelProducto.push(nuevaOC);
             listadoMaestroOCs.push(nuevaOC);
 
-            // Ajustar inventario tras la compra simulada
-            inventarioCorriente += loteSugeridoEstandar;
+            // Inyectamos de inmediato el lote sugerido para levantar la simulación del stock
+            stockSimulado += loteSugeridoEstandar;
           }
 
-          // Guardar curvas del gráfico para los primeros 14 meses
-          if (t < 14) {
-            datosCronologicosGrafico.push({
-              mes: etiquetaMesAnual,
-              stockProyectado: Math.round(inventarioCorriente),
-              velocidadConsumo: Math.round(promedioConsumo),
-              cantidadArribo: añoSimulado === 2026 ? (arribosRealesPorMes[indiceMesAbsoluto] || 0) : 0,
-              cantidadIngresoSimulado: ocsDelProducto.filter(o => o.mesAbsolutoArribo === t).reduce((sum, c) => sum + c.cantidadAComprar, 0),
-              tipo: "PROYECCION"
-            });
-          }
-        }
+          // Guardar curvas para el gráfico Recharts
+          datosCronologicosGrafico.push({
+            mes: `${NOMBRES_MESES[m.mNum]} '${String(m.aNum).slice(-2)}`,
+            stockProyectado: Math.max(0, Math.round(stockSimulado)),
+            velocidadConsumo: Math.round(demandaEfectivaEsteMes),
+            cantidadArribo: entradasOCReales,
+            cantidadIngresoSimulado: ocsDelProducto.filter(o => o.mesAbsolutoArribo === idx).reduce((sum, c) => sum + c.cantidadAComprar, 0),
+            tipo: "PROYECCION"
+          });
+        });
       }
 
-      // Si el código no quiebra en toda la ventana, añadir registro de inventario saludable
       if (ocsDelProducto.length === 0) {
         listadoMaestroOCs.push({
           id: `${item.id}-ok`,
@@ -239,9 +246,9 @@ export default function PlanificadorAbastecimientoAres() {
           description: item.description,
           family: item.family,
           stockInicialFisico: stockFisicoActual,
-          promedioConsumo: Math.round(promedioConsumo),
+          promedioConsumo: Math.round(demandaPredichaFinal),
           numeroOrdenTexto: "SIN REQUERIMIENTO",
-          mesQuiebreTexto: "SALDADO 2026",
+          mesQuiebreTexto: "ESTABLE",
           mesLanzamientoTexto: "AL DÍA",
           cantidadAComprar: 0,
           leadTimeDias,
@@ -253,16 +260,19 @@ export default function PlanificadorAbastecimientoAres() {
     });
 
     return { listadoMaestroOCs, curvasPorProducto };
-  }, [productos]);
+  }, [productos, AÑO_ACTUAL, MES_ACTUAL_JS, fechaActualComputada]);
 
-  // Filtrado ejecutivo de las OCs en base a la urgencia
+  // Filtrado de la tabla según buscador y estatus
   const ocsFiltradas = useMemo(() => {
-    const lista = analisisAbastecimiento.listadoMaestroOCs;
+    let lista = analisisAbastecimiento.listadoMaestroOCs;
+    if (busqueda && !mostrarDropdown) {
+      lista = lista.filter(o => o.code.toLowerCase().includes(busqueda.toLowerCase()) || o.description.toLowerCase().includes(busqueda.toLowerCase()));
+    }
     if (filtroCriticidad === "TODOS") return lista;
     if (filtroCriticidad === "CRITICO") return lista.filter(o => o.criticidad === "CRITICO");
     if (filtroCriticidad === "PLANIFICADO") return lista.filter(o => o.criticidad === "PLANIFICADO");
     return lista.filter(o => o.criticidad === "OPTIMO");
-  }, [analisisAbastecimiento, filtroCriticidad]);
+  }, [analisisAbastecimiento, filtroCriticidad, busqueda, mostrarDropdown]);
 
   const conteoEstatus = useMemo(() => {
     const lista = analisisAbastecimiento.listadoMaestroOCs;
@@ -288,7 +298,7 @@ export default function PlanificadorAbastecimientoAres() {
   const exportarPlanAExcel = () => {
     const datosPlan = analisisAbastecimiento.listadoMaestroOCs;
     let csv = "\uFEFF"; 
-    csv += "CRITICIDAD;CÓDIGO SKU;DESCRIPCIÓN;SUGERENCIA CORRIENTE;STOCK FISICO INICIAL;PROMEDIO CONSUMO MENSUAL;FECHA SUGERIDA EMISIÓN;MES ESTIMADO QUIEBRE;CANTIDAD A COMPRAR\n";
+    csv += "CRITICIDAD;CÓDIGO SKU;DESCRIPCIÓN;SUGERENCIA CORRIENTE;STOCK FISICO INICIAL;CONSUMO IA SUGERIDO;FECHA SUGERIDA EMISIÓN;MES ESTIMADO QUIEBRE;CANTIDAD A COMPRAR\n";
 
     datosPlan.forEach(item => {
       const fila = [
@@ -309,7 +319,7 @@ export default function PlanificadorAbastecimientoAres() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.setAttribute("download", `Explosion_OC_Sugeridas_Ares_2026.csv`);
+    link.setAttribute("download", `Plan_Cronologia_CierreAño_${AÑO_ACTUAL}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -319,7 +329,7 @@ export default function PlanificadorAbastecimientoAres() {
     <div className="min-h-[50vh] flex items-center justify-center bg-[#f8fafc]">
       <div className="text-center space-y-2">
         <div className="w-9 h-9 border-2 border-purple-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
-        <p className="text-[11px] font-black text-slate-400 uppercase tracking-wider">Generando Libro de Órdenes...</p>
+        <p className="text-[11px] font-black text-slate-400 uppercase tracking-wider">Sincronizando Cronogramas Activos con Algoritmo IA...</p>
       </div>
     </div>
   );
@@ -327,15 +337,15 @@ export default function PlanificadorAbastecimientoAres() {
   return (
     <div className="bg-[#f8fafc] p-3 space-y-4 w-full text-slate-800 font-sans antialiased">
       
-      {/* CUADRO PRINCIPAL: LIBRO CENTRAL DE REQUERIMIENTOS Y EMISIÓN DE OC */}
+      {/* CUADRO PRINCIPAL */}
       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-100 pb-3 gap-2">
           <div>
             <div className="flex items-center gap-2 text-xs font-black text-slate-900 uppercase tracking-wider">
               <ShoppingCart className="text-purple-600" size={14} />
-              <span>Explosión Maestra de Órdenes de Compra (Línea por Requerimiento)</span>
+              <span>Cronograma Maestro de Órdenes de Compra (Cierre de Año)</span>
             </div>
-            <p className="text-[10px] text-slate-400 font-medium uppercase">Muestra de forma segregada cada OC sucesiva necesaria para mantener la continuidad operacional.</p>
+            <p className="text-[10px] text-slate-400 font-medium uppercase">Emisión de OCs calculadas siempre un mes antes de cumplir el Lead Time crítico del quiebre.</p>
           </div>
           
           <button
@@ -343,17 +353,17 @@ export default function PlanificadorAbastecimientoAres() {
             className="flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] px-3 py-1.5 rounded-lg shadow-sm transition-all uppercase tracking-wider self-start sm:self-auto"
           >
             <FileSpreadsheet size={13} />
-            Exportar OCs a Excel
+            Exportar Líneas a Excel
           </button>
         </div>
 
-        {/* SELECTORES DE FILTRO EJECUTIVO */}
+        {/* SELECTORES DE FILTRO */}
         <div className="flex flex-wrap gap-2 text-[10px] font-bold">
           <button 
             onClick={() => setFiltroCriticidad("TODOS")}
             className={`px-3 py-1.5 rounded-lg border transition-all ${filtroCriticidad === "TODOS" ? 'bg-slate-900 text-white border-slate-900 shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
           >
-            Todas las Líneas ({analisisAbastecimiento.listadoMaestroOCs.length})
+            Todos los Activos ({analisisAbastecimiento.listadoMaestroOCs.length})
           </button>
           
           <button 
@@ -361,15 +371,14 @@ export default function PlanificadorAbastecimientoAres() {
             className={`px-3 py-1.5 rounded-lg border transition-all flex items-center gap-1.5 ${filtroCriticidad === "CRITICO" ? 'bg-rose-600 text-white border-rose-600 shadow-sm' : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'}`}
           >
             <AlertTriangle size={12} />
-            🚨 CRÍTICOS / POR QUEBRAR ({conteoEstatus.criticos})
+            🚨 EMITIR INMEDIATO ({conteoEstatus.criticos})
           </button>
 
           <button 
             onClick={() => setFiltroCriticidad("PLANIFICADO")}
             className={`px-3 py-1.5 rounded-lg border transition-all flex items-center gap-1.5 ${filtroCriticidad === "PLANIFICADO" ? 'bg-amber-500 text-white border-amber-500 shadow-sm' : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'}`}
           >
-            <Clock size={12} />
-            🗓️ PLANIFICADOS posterior a Junio ({conteoEstatus.planificados})
+            🗓️ EMISIONES CRONOGRAMADAS ({conteoEstatus.planificados})
           </button>
 
           <button 
@@ -377,7 +386,7 @@ export default function PlanificadorAbastecimientoAres() {
             className={`px-3 py-1.5 rounded-lg border transition-all flex items-center gap-1.5 ${filtroCriticidad === "OPTIMO" ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm' : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'}`}
           >
             <CheckCircle2 size={12} />
-            Stock Óptimo ({conteoEstatus.optimos})
+            CON STOCK SEGURO ({conteoEstatus.optimos})
           </button>
         </div>
 
@@ -386,14 +395,14 @@ export default function PlanificadorAbastecimientoAres() {
           <table className="w-full text-left border-collapse text-[10px] bg-white">
             <thead className="sticky top-0 bg-slate-100 z-10 shadow-sm">
               <tr className="text-slate-400 uppercase tracking-wider font-black text-[9px] border-b border-slate-200">
-                <th className="p-2.5">Estatus Emisión</th>
+                <th className="p-2.5">Mes Emisión OC</th>
                 <th className="p-2.5">SKU Código</th>
                 <th className="p-2.5">Descripción del Material</th>
                 <th className="p-2.5 text-center">N° Sugerencia</th>
-                <th className="p-2.5 text-center bg-slate-50/50">Stock Actual</th>
-                <th className="p-2.5 text-center bg-slate-50/50">Consumo Promedio</th>
-                <th className="p-2.5 text-center">Mes de Quiebre</th>
-                <th className="p-2.5 text-right text-purple-700 font-black">Cantidad sugerida comprar</th>
+                <th className="p-2.5 text-center bg-slate-50/50">Stock Físico</th>
+                <th className="p-2.5 text-center bg-slate-50/50">Consumo AI (+25%)</th>
+                <th className="p-2.5 text-center">Mes Est. Quiebre</th>
+                <th className="p-2.5 text-right text-purple-700 font-black">Cantidad a Emitir</th>
                 <th className="p-2.5 text-center">Línea Temporal</th>
               </tr>
             </thead>
@@ -402,12 +411,12 @@ export default function PlanificadorAbastecimientoAres() {
                 <tr key={`${oc.id}-${idx}`} className="hover:bg-slate-50/80 transition-colors">
                   <td className="p-2.5">
                     <span className={`px-2 py-0.5 rounded text-[9px] font-black border uppercase ${
-                      oc.criticidad === 'CRITICO' ? 'bg-rose-100 text-rose-700 border-rose-300 animate-pulse' : 
+                      oc.criticidad === 'CRITICO' ? 'bg-rose-100 text-rose-700 border-rose-300' : 
                       oc.criticidad === 'PLANIFICADO' ? 'bg-amber-50 text-amber-700 border-amber-200' : 
                       oc.criticidad === 'FUTURO' ? 'bg-slate-100 text-slate-600 border-slate-200' :
                       'bg-emerald-50 text-emerald-700 border-emerald-200'
                     }`}>
-                      {oc.criticidad === 'CRITICO' ? "🔴 EMITIR YA" : oc.mesLanzamientoTexto}
+                      {oc.criticidad === 'CRITICO' ? "🚨 EMITIR YA" : oc.mesLanzamientoTexto}
                     </span>
                   </td>
                   <td className="p-2.5 font-bold text-slate-900">{oc.code}</td>
@@ -418,7 +427,7 @@ export default function PlanificadorAbastecimientoAres() {
                     </span>
                   </td>
                   <td className="p-2.5 text-center font-bold text-slate-900 bg-slate-50/30">{oc.stockInicialFisico.toLocaleString()} un.</td>
-                  <td className="p-2.5 text-center text-slate-500 bg-slate-50/30">{oc.promedioConsumo.toLocaleString()} un/mes</td>
+                  <td className="p-2.5 text-center text-purple-900 font-bold bg-purple-50/20">{oc.promedioConsumo.toLocaleString()} u/mes</td>
                   <td className="p-2.5 text-center">
                     <span className={`font-bold ${oc.cantidadAComprar === 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                       {oc.mesQuiebreTexto}
@@ -436,34 +445,27 @@ export default function PlanificadorAbastecimientoAres() {
                       }}
                       className="text-purple-600 hover:text-purple-900 font-bold underline flex items-center justify-center gap-0.5 mx-auto text-[9px]"
                     >
-                      Analizar <ArrowRight size={10} />
+                      Ver Curva <ArrowRight size={10} />
                     </button>
                   </td>
                 </tr>
               ))}
-              {ocsFiltradas.length === 0 && (
-                <tr>
-                  <td colSpan={9} className="p-8 text-center text-slate-400 font-bold uppercase tracking-wider">
-                    Ninguna orden de compra coincide con la criticidad seleccionada.
-                  </td>
-                </tr>
-              )}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* SECCIÓN EXPLORADORA DE CURVA COMPACTA GRÁFICA */}
+      {/* SECCIÓN MONITOR GRAFICO COMPACTO */}
       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-4">
         <div className="bg-slate-50 p-2 rounded-lg border border-slate-200 relative">
-          <label className="text-[8px] font-black text-slate-400 uppercase tracking-wider block mb-1">Buscador y Monitor Individual por SKU</label>
+          <label className="text-[8px] font-black text-slate-400 uppercase tracking-wider block mb-1">Buscador Activo por SKU para Simulación Escalada</label>
           <input
             type="text"
             className="w-full px-3 py-1 bg-white border border-slate-200 rounded-md text-[10px] font-semibold text-slate-900 outline-none focus:border-purple-600"
             value={busqueda}
             onChange={(e) => { setBusqueda(e.target.value); setMostrarDropdown(true); }}
             onFocus={() => setMostrarDropdown(true)}
-            placeholder="Selecciona o busca un SKU para visualizar la escalera de quiebres futuros..."
+            placeholder="Escribe el código del producto..."
           />
 
           {mostrarDropdown && productos.length > 0 && (
@@ -489,10 +491,10 @@ export default function PlanificadorAbastecimientoAres() {
             <div className="flex items-center justify-between border-b border-slate-100 pb-1.5 text-[10px]">
               <div className="flex items-center gap-1 font-black text-slate-900 uppercase">
                 <ChartIcon size={12} className="text-purple-600" />
-                <span>Simulación de Cobertura y Escalera de Reposiciones: {analisisSku.code}</span>
+                <span>Escalera de Abastecimiento Proyectada (Consumo IA con +25%): {analisisSku.code}</span>
               </div>
               <div className="font-bold text-slate-400 uppercase">
-                Inventario Base: <span className="text-slate-900 font-black">{analisisSku.stockFisicoActual} un.</span>
+                Lead Time: <span className="text-slate-900 font-black">{analisisSku.lead_time} días</span>
               </div>
             </div>
 
@@ -513,29 +515,13 @@ export default function PlanificadorAbastecimientoAres() {
                   <ReferenceLine y={0} stroke="#cbd5e1" strokeWidth={1} />
                   <Area type="monotone" dataKey="stockProyectado" name="Inventario Proyectado" stroke="#4f46e5" strokeWidth={2} fillOpacity={1} fill="url(#colorStockPlan)" />
 
-                  {/* Líneas de alertas de emisión de OCs en la gráfica */}
-                  {analisisSku.alertasMaturacion.map((o: any, idx: number) => {
-                    if (o.criticidad === "CRITICO") {
-                      return (
-                        <ReferenceLine key={`line-crit-${idx}`} x="JUN 26" stroke="#f43f5e" strokeWidth={2} strokeDasharray="2 2">
-                          <Label value="❗ DEBIÓ EMITIRSE" position="top" fill="#be123c" fontSize={8} fontWeight="black" />
-                        </ReferenceLine>
-                      );
-                    }
-                    return (
-                      <ReferenceLine key={`line-plan-${idx}`} x={o.mesLanzamientoTexto} stroke="#f59e0b" strokeWidth={1} strokeDasharray="3 3">
-                        <Label value={`${o.numeroOrdenTexto}`} position="top" fill="#d97706" fontSize={8} fontWeight="black" />
-                      </ReferenceLine>
-                    );
-                  })}
-
-                  {/* Renderizar los ingresos repetitivos de mercadería simulada */}
+                  {/* Renderizar ingresos simulados */}
                   {analisisSku.proyeccionesPorMes.map((p: any, idx: number) => {
                     const totalIngreso = (p.cantidadArribo || 0) + (p.cantidadIngresoSimulado || 0);
                     if (totalIngreso > 0) {
                       return (
                         <ReferenceLine key={`ingreso-cont-${idx}`} x={p.mes} stroke="#10b981" strokeWidth={1.2}>
-                          <Label value={`+${totalIngreso.toLocaleString()} UN`} position="insideTopLeft" fill="#047857" fontSize={7} fontWeight="black" />
+                          <Label value={`+${totalIngreso.toLocaleString()} UN`} position="insideTopLeft" fill="#047857" fontSize={7} fontStyle="bold" />
                         </ReferenceLine>
                       );
                     }
