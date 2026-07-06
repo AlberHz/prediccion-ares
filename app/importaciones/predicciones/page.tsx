@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, Fragment } from "react";
 import { supabase } from "@/lib/supabase";
 import { Search, ArrowDownToLine, Ship, TrendingUp, EyeOff, Eye, Layers } from "lucide-react";
 
@@ -13,20 +13,22 @@ export default function ModuloPredicciones() {
 
   // 🗓️ CONFIGURACIÓN DE FECHA 100% DINÁMICA
   const fechaActualComputada = useMemo(() => new Date(), []);
-  const AÑO_ACTUAL = fechaActualComputada.getFullYear(); // Detecta automáticamente el año (ej: 2026)
-  const MES_ACTUAL_JS = fechaActualComputada.getMonth();   // Detecta el mes actual (0 = Ene, 5 = Jun, etc.)
+  const AÑO_ACTUAL = fechaActualComputada.getFullYear(); 
+  const MES_ACTUAL_JS = fechaActualComputada.getMonth();   
 
   const DOCUMENTOS_SALIDA = ["NS", "22", "23", "93", "TD"];
 
-  // Se ejecuta una SOLA VEZ al montar el componente de manera segura
   useEffect(() => {
     let isMounted = true;
     
     async function fetchDataReal() {
       try {
-        // 🌟 Se agregó "custom_average_consumption" a la lectura de productos
-        const { data: dbProducts, error: errProd } = await supabase.from("products").select("id, code, description, family, lead_time, stock, active, custom_average_consumption");
-        const { data: dbArrivals, error: errArr } = await supabase.from("arrivals").select("*");
+        const { data: dbProducts, error: errProd } = await supabase
+          .from("products")
+          .select("id, code, description, family, lead_time, stock, active, custom_average_consumption");
+        const { data: dbArrivals, error: errArr } = await supabase
+          .from("arrivals")
+          .select("*");
 
         if (errProd) throw errProd;
         if (errArr) throw errArr;
@@ -71,10 +73,10 @@ export default function ModuloPredicciones() {
             code: p.code ? String(p.code).trim() : "SIN CÓDIGO",
             description: p.description ? String(p.description).trim() : "SIN DESCRIPCIÓN",
             family: p.family ? String(p.family).trim() : "GENERAL",
-            lead_time: parseInt(p.lead_time) || 0,
+            lead_time: parseInt(p.lead_time, 10) || 0,
             stockFisico: Number(p.stock || 0),
             active: p.active !== false, 
-            custom_average_consumption: parseInt(p.custom_average_consumption) || 0, // 🌟 Mapeado seguro a memoria
+            custom_average_consumption: Number(p.custom_average_consumption || 0),
             movimientos: historialDelSku,
             arribos: arribosDelSku
           };
@@ -114,7 +116,6 @@ export default function ModuloPredicciones() {
     }
   };
 
-  // 🗓️ CABECERAS DINÁMICAS: Empiezan desde el mes actual y avanzan 12 meses hacia el futuro
   const mesesHeaders = useMemo(() => {
     const nombresMeses = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"];
     const listaHeaders = [];
@@ -149,7 +150,7 @@ export default function ModuloPredicciones() {
         });
 
         const historialPorMes: { [key: string]: number } = {};
-        validasSalidas: salidasValidas.forEach((m: any) => {
+        salidasValidas.forEach((m: any) => {
           const fechaObj = m.date ? new Date(m.date) : new Date(m.created_at);
           const llaveMes = `${fechaObj.getFullYear()}-${fechaObj.getMonth()}`;
           historialPorMes[llaveMes] = (historialPorMes[llaveMes] || 0) + Math.abs(Number(m.quantity || 0));
@@ -159,29 +160,36 @@ export default function ModuloPredicciones() {
         const totalMesesPeriodo = cantidadesMensuales.length > 0 ? cantidadesMensuales.length : 1;
         const unidadesTotalesSalida = cantidadesMensuales.reduce((sum, val) => sum + val, 0);
         
-        // 🌟 REGLA DE NEGOCIO ENRIQUECIDA: Si tiene promedio manual fijado mayor a 0, usa ese, sino calcula el real del historial.
+        // 1. Promedio histórico crudo
+        const promedioHistoricoCrudo = unidadesTotalesSalida / totalMesesPeriodo;
+
+        // 2. Definimos el promedioMensualReal para que no dé error y se muestre bien
         const promedioMensualReal = item.custom_average_consumption > 0 
           ? item.custom_average_consumption 
-          : (unidadesTotalesSalida / totalMesesPeriodo);
+          : promedioHistoricoCrudo;
 
+        // 3. Cálculos IA (solo se usarán si NO hay promedio manual)
         const varianza = cantidadesMensuales.length > 1
-          ? cantidadesMensuales.reduce((sum, val) => sum + Math.pow(val - promedioMensualReal, 2), 0) / (cantidadesMensuales.length - 1)
+          ? cantidadesMensuales.reduce((sum, val) => sum + Math.pow(val - promedioHistoricoCrudo, 2), 0) / (cantidadesMensuales.length - 1)
           : 0;
         const desviaciónEstandar = Math.sqrt(varianza);
 
-        const demandaConIncremento = promedioMensualReal * 1.20; 
+        const demandaConIncremento = promedioHistoricoCrudo * 1.30; 
         let factorTendenciaAlcista5 = 1.28 * desviaciónEstandar;
         const colchonMaximoPermitido = demandaConIncremento * 0.25;
         if (factorTendenciaAlcista5 > colchonMaximoPermitido) {
           factorTendenciaAlcista5 = colchonMaximoPermitido;
         }
 
-        const demandaPredichaFinal = promedioMensualReal > 0 ? demandaConIncremento + factorTendenciaAlcista5 : 0;
+        // 🚀 4. REGLA ESTRICTA: Predicción final respeta al 100% el manual
+        const demandaPredichaFinal = item.custom_average_consumption > 0 
+          ? item.custom_average_consumption 
+          : (promedioHistoricoCrudo > 0 ? demandaConIncremento + factorTendenciaAlcista5 : 0);
 
         const totalArribos = item.arribos.reduce((sum: number, a: any) => sum + Number(a.quantity || 0), 0);
         const inventarioVirtual = stockFisico + totalArribos;
         const coberturaMeses = demandaPredichaFinal > 0 ? inventarioVirtual / demandaPredichaFinal : 0;
-        const sugeridoCompra = demandaPredichaFinal > 0 ? (demandaPredichaFinal * leadTimeMeses) * 1.15 : 0;
+        const puntoRopCalculado = demandaPredichaFinal > 0 ? (demandaPredichaFinal * leadTimeMeses) * 1.15 : 0;
 
         let stockSimulado = stockFisico;
         let mesQuiebreCalculado = "ESTABLE";
@@ -246,11 +254,12 @@ export default function ModuloPredicciones() {
           coberturaMeses,
           mesQuiebre: quiebreRealDetectado ? mesQuiebreCalculado : "OK",
           fechaLimiteOCStr: quiebreRealDetectado ? fechaLimiteOC.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' }) : "---",
-          pedidoSugerido: quiebreRealDetectado ? sugeridoCompra : 0, 
+          puntoRop: quiebreRealDetectado ? puntoRopCalculado : 0, 
           proyeccionesPorMes,
           estado: estadoAbastecimiento
         };
-      }).filter(i => {
+      })
+      .filter(i => {
         const cumpleBusqueda = i.code.toLowerCase().includes(search.toLowerCase()) || i.description.toLowerCase().includes(search.toLowerCase());
         const cumpleEstado = filtroEstado === "TODOS" || i.estado === filtroEstado;
         const cumpleFamilia = filtroFamilia === "TODOS" || i.family === filtroFamilia;
@@ -258,7 +267,6 @@ export default function ModuloPredicciones() {
       });
   }, [productos, search, filtroEstado, filtroFamilia, mesesHeaders, AÑO_ACTUAL, MES_ACTUAL_JS, mostrarOcultos]);
 
-  // 🗂️ AGRUPACIÓN DINÁMICA POR FAMILIA PARA LA TABLA
   const dataAgrupadaPorFamilia = useMemo(() => {
     return dataProcesada.reduce((acc: { [key: string]: any[] }, item) => {
       const familia = item.family || "GENERAL";
@@ -272,15 +280,15 @@ export default function ModuloPredicciones() {
 
   const resumenMétricas = useMemo(() => {
     const totalItems = dataProcesada.length;
-    if (totalItems === 0) return { stockTotal: 0, arribosTotal: 0, sugeridoTotal: 0, promedioConsumoIA: 0, promedioCobertura: 0 };
+    if (totalItems === 0) return { stockTotal: 0, arribosTotal: 0, ropTotal: 0, promedioConsumoIA: 0, promedioCobertura: 0 };
 
     const stockTotal = dataProcesada.reduce((sum, item) => sum + item.stockFisico, 0);
     const arribosTotal = dataProcesada.reduce((sum, item) => sum + item.enTránsito, 0);
-    const sugeridoTotal = dataProcesada.reduce((sum, item) => sum + item.pedidoSugerido, 0);
+    const ropTotal = dataProcesada.reduce((sum, item) => sum + item.puntoRop, 0);
     const promedioConsumoIA = dataProcesada.reduce((sum, item) => sum + item.consumoIA, 0) / totalItems;
     const promedioCobertura = dataProcesada.reduce((sum, item) => sum + item.coberturaMeses, 0) / totalItems;
 
-    return { stockTotal, arribosTotal, sugeridoTotal, promedioConsumoIA, promedioCobertura };
+    return { stockTotal, arribosTotal, ropTotal, promedioConsumoIA, promedioCobertura };
   }, [dataProcesada]);
 
   const familiasUnicas = useMemo(() => {
@@ -384,8 +392,8 @@ export default function ModuloPredicciones() {
           </div>
 
           <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-200 shadow-sm">
-            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Total Sugerido Compra</p>
-            <p className="text-xl font-black mt-1 text-emerald-900">{Math.round(resumenMétricas.sugeridoTotal).toLocaleString()} <span className="text-[10px] font-normal text-emerald-500">unidades</span></p>
+            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Total Punto ROP</p>
+            <p className="text-xl font-black mt-1 text-emerald-900">{Math.round(resumenMétricas.ropTotal).toLocaleString()} <span className="text-[10px] font-normal text-emerald-500">unidades</span></p>
           </div>
         </div>
 
@@ -400,7 +408,7 @@ export default function ModuloPredicciones() {
                   <th className="p-3 text-center w-24 border-b border-slate-700">L. Time</th>
                   <th className="p-3 text-right w-28 border-b border-slate-700">Stock</th>
                   <th className="p-3 text-right w-28 border-b border-slate-700">Arribos</th>
-                  <th className="p-3 text-right w-48 border-b border-slate-700 bg-purple-950 text-purple-300 font-black">Prediccion</th>
+                  <th className="p-3 text-right w-48 border-b border-slate-700 bg-purple-950 text-purple-300 font-black">Promedio</th>
                   <th className="p-3 text-center w-28 border-b border-slate-700 bg-slate-900 text-blue-300">Cobertura</th>
                   <th className="p-3 text-center w-24 border-b border-slate-700">Quiebre</th>
                   <th className="p-3 text-center w-28 border-b border-slate-700">Fecha OC</th>
@@ -413,152 +421,143 @@ export default function ModuloPredicciones() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-[11px]">
-                {Object.keys(dataAgrupadaPorFamilia).map((familia) => [
-                  // 1️⃣ FILA SEPARADORA/SUBTÍTULO DE FAMILIA
-                  <tr key={`group-${familia}`} className="bg-slate-100/80 font-bold text-slate-700 tracking-wide">
-                    <td colSpan={10 + mesesHeaders.length} className="p-2.5 pl-4 border-y border-slate-200">
-                      <span className="inline-flex items-center gap-2 text-[11px] uppercase text-slate-900 font-black">
-                        <Layers size={13} className="text-purple-600" />
-                        FAMILIA: {familia} 
-                        <span className="text-[10px] font-normal text-slate-500 normal-case bg-white border border-slate-200 px-2 py-0.5 rounded-full ml-1">
-                          {dataAgrupadaPorFamilia[familia].length} {dataAgrupadaPorFamilia[familia].length === 1 ? 'SKU detectado' : 'SKUs detectados'}
-                        </span>
-                      </span>
-                    </td>
-                  </tr>,
-                  // 2️⃣ FILAS DE PRODUCTOS DE ESTA FAMILIA
-                  dataAgrupadaPorFamilia[familia].map((row) => {
-                    let colorAlerta = "bg-emerald-50 text-emerald-700 border-emerald-200";
-                    if (row.estado === "COMPRAR YA") colorAlerta = "bg-red-50 text-red-700 border-red-200 font-bold animate-pulse";
-                    if (row.estado === "POR REVISAR") colorAlerta = "bg-amber-50 text-amber-700 border-amber-200 font-semibold";
-                    if (row.estado === "SIN MOVIMIENTO") colorAlerta = "bg-slate-50 text-slate-400 border-slate-200";
-
-                    return (
-                      <tr key={row.id} className="hover:bg-slate-50/80 group transition-colors whitespace-nowrap">
-                        {/* Código */}
-                        <td className="p-3 font-mono text-slate-900 font-bold">
-                          <div className="flex items-center gap-2">
-                            {row.active ? (
-                              <button 
-                                onClick={() => deshabilitarYArchivarSku(row.id, row.code)}
-                                className="opacity-0 group-hover:opacity-100 p-1 hover:bg-slate-200 rounded transition-all text-slate-400 hover:text-red-600"
-                                title="Archivar SKU"
-                              >
-                                <EyeOff size={12} />
-                              </button>
-                            ) : (
-                              <button 
-                                onClick={() => reestablecerSku(row.id, row.code)}
-                                className="p-1 bg-amber-100 hover:bg-amber-200 rounded text-amber-800 flex items-center gap-1"
-                                title="Restaurar SKU"
-                              >
-                                <Eye size={12} />
-                              </button>
-                            )}
-                            <span className={!row.active ? "line-through text-slate-400" : ""}>{row.code}</span>
-                          </div>
-                        </td>
-
-                        {/* Descripción */}
-                        <td className="p-3 truncate max-w-[340px] font-medium text-slate-600" title={row.description}>
-                          {row.description}
-                        </td>
-
-                        {/* Lead Time */}
-                        <td className="p-3 text-center font-medium text-slate-500">
-                          {row.lead_time}d
-                        </td>
-
-                        {/* Stock Físico */}
-                        <td className="p-3 text-right font-bold text-slate-900 bg-slate-50/40">
-                          {row.stockFisico.toLocaleString()}
-                        </td>
-
-                        {/* Arribos */}
-                        <td className="p-3 text-right font-medium text-blue-600 bg-blue-50/10">
-                          {row.enTránsito > 0 ? (
-                            <span className="inline-flex items-center gap-1">
-                              <Ship size={11} className="text-blue-400" />
-                              {row.enTránsito.toLocaleString()}
-                            </span>
-                          ) : (
-                            <span className="text-slate-300">---</span>
-                          )}
-                        </td>
-
-                        {/* Predicción IA */}
-                        <td className="p-3 text-right font-bold bg-purple-50/40 text-purple-950 border-r border-purple-100">
-                          {row.consumoIA > 0 ? `${Math.round(row.consumoIA).toLocaleString()} u/m` : "0"}
-                        </td>
-
-                        {/* Cobertura */}
-                        <td className="p-3 text-center bg-slate-50/50">
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${colorAlerta}`}>
-                            {row.coberturaMeses > 99 ? "∞" : `${row.coberturaMeses.toFixed(1)} m`}
+                {Object.keys(dataAgrupadaPorFamilia).map((familia) => (
+                  <Fragment key={`group-container-${familia}`}>
+                    {/* 1️⃣ FILA SEPARADORA/SUBTÍTULO DE FAMILIA */}
+                    <tr className="bg-slate-100/80 font-bold text-slate-700 tracking-wide">
+                      <td colSpan={10 + mesesHeaders.length} className="p-2.5 pl-4 border-y border-slate-200">
+                        <span className="inline-flex items-center gap-2 text-[11px] uppercase text-slate-900 font-black">
+                          <Layers size={13} className="text-purple-600" />
+                          FAMILIA: {familia} 
+                          <span className="text-[10px] font-normal text-slate-500 normal-case bg-white border border-slate-200 px-2 py-0.5 rounded-full ml-1">
+                            {dataAgrupadaPorFamilia[familia].length} {dataAgrupadaPorFamilia[familia].length === 1 ? 'SKU detectado' : 'SKUs detectados'}
                           </span>
-                        </td>
+                        </span>
+                      </td>
+                    </tr>
+                    {/* 2️⃣ FILAS DE PRODUCTOS DE ESTA FAMILIA */}
+                    {dataAgrupadaPorFamilia[familia].map((row) => {
+                      let colorAlerta = "bg-emerald-50 text-emerald-700 border-emerald-200";
+                      if (row.estado === "COMPRAR YA") colorAlerta = "bg-red-50 text-red-700 border-red-200 font-bold animate-pulse";
+                      if (row.estado === "POR REVISAR") colorAlerta = "bg-amber-50 text-amber-700 border-amber-200 font-semibold";
+                      if (row.estado === "SIN MOVIMIENTO") colorAlerta = "bg-slate-50 text-slate-400 border-slate-200";
 
-                        {/* Mes Quiebre */}
-                        <td className="p-3 text-center font-bold">
-                          {row.mesQuiebre === "OK" ? (
-                            <span className="text-emerald-600 text-[10px] font-black">OK</span>
-                          ) : (
-                            <span className="text-red-600 bg-red-50 px-1.5 py-0.5 rounded text-[10px] font-black border border-red-100">{row.mesQuiebre}</span>
-                          )}
-                        </td>
+                      return (
+                        <tr key={row.id} className="hover:bg-slate-50/80 group transition-colors whitespace-nowrap">
+                          <td className="p-3 font-mono text-slate-900 font-bold">
+                            <div className="flex items-center gap-2">
+                              {row.active ? (
+                                <button 
+                                  onClick={() => deshabilitarYArchivarSku(row.id, row.code)}
+                                  className="opacity-0 group-hover:opacity-100 p-1 hover:bg-slate-200 rounded transition-all text-slate-400 hover:text-red-600"
+                                  title="Archivar SKU"
+                                >
+                                  <EyeOff size={12} />
+                                </button>
+                              ) : (
+                                <button 
+                                  onClick={() => reestablecerSku(row.id, row.code)}
+                                  className="p-1 bg-amber-100 hover:bg-amber-200 rounded text-amber-800 flex items-center gap-1"
+                                  title="Restaurar SKU"
+                                >
+                                  <Eye size={12} />
+                                </button>
+                              )}
+                              <span className={!row.active ? "line-through text-slate-400" : ""}>{row.code}</span>
+                            </div>
+                          </td>
 
-                        {/* Fecha Límite OC */}
-                        <td className="p-3 text-center font-mono font-semibold text-slate-500">
-                          {row.fechaLimiteOCStr === "---" ? (
-                            <span className="text-slate-300">---</span>
-                          ) : (
-                            <span className={row.estado === "COMPRAR YA" ? "text-red-600 font-bold" : "text-slate-600"}>
-                              {row.fechaLimiteOCStr}
+                          <td className="p-3 truncate max-w-[340px] font-medium text-slate-600" title={row.description}>
+                            {row.description}
+                          </td>
+
+                          <td className="p-3 text-center font-medium text-slate-500">
+                            {row.lead_time}
+                          </td>
+
+                          <td className="p-4 text-right font-bold text-slate-900 bg-slate-50/40">
+                            {row.stockFisico.toLocaleString()}
+                          </td>
+
+                          <td className="p-3 text-right font-medium text-blue-700 bg-blue-50/10">
+                            {row.enTránsito > 0 ? (
+                              <span className="inline-flex items-center gap-1">
+                                <Ship size={13} className="text-blue-600" />
+                                {row.enTránsito.toLocaleString()}
+                              </span>
+                            ) : (
+                              <span className="text-slate-300">---</span>
+                            )}
+                          </td>
+
+                          <td className="p-4 text-right font-bold bg-purple-50/40 text-purple-950 border-r border-purple-100">
+                            {row.consumoIA > 0 ? `${Math.round(row.consumoIA).toLocaleString()} u/m` : "0"}
+                          </td>
+
+                          <td className="p-3 text-center bg-slate-50/50">
+                            <span className={`px-2 py-0.5 rounded-full text-[13px] font-bold ${colorAlerta}`}>
+                              {row.coberturaMeses > 99 ? "∞" : `${row.coberturaMeses.toFixed(1)} m`}
                             </span>
-                          )}
-                        </td>
+                          </td>
 
-                        {/* Sugerido Compra */}
-                        <td className="p-3 text-right font-black bg-emerald-50/30 text-emerald-900 border-r border-slate-200">
-                          {row.pedidoSugerido > 0 ? (
-                            <span className="inline-flex items-center gap-1 text-emerald-700">
-                              <ArrowDownToLine size={12} className="text-emerald-500" />
-                              {Math.round(row.pedidoSugerido).toLocaleString()}
-                            </span>
-                          ) : (
-                            <span className="text-slate-300 font-normal">---</span>
-                          )}
-                        </td>
+                          <td className="p-3 text-center font-bold">
+                            {row.mesQuiebre === "OK" ? (
+                              <span className="text-emerald-600 text-[10px] font-black">OK</span>
+                            ) : (
+                              <span className="text-red-600 bg-red-50 px-1.5 py-0.5 rounded text-[10px] font-black border border-red-100">{row.mesQuiebre}</span>
+                            )}
+                          </td>
 
-                        {/* 📅 CELDAS DINÁMICAS DE LOS 12 MESES FUTUROS */}
-                        {row.proyeccionesPorMes.map((mesProj: any, idx: number) => {
-                          const tieneArribo = mesProj.arriboInyectado > 0;
-                          const inventarioCero = mesProj.stockFinal <= 0;
+                          <td className="p-3 text-center text-[13px] font-mono font-semibold text-slate-500">
+                            {row.fechaLimiteOCStr === "---" ? (
+                              <span className="text-slate-600">---</span>
+                            ) : (
+                              <span className={row.estado === "COMPRAR YA" ? "text-red-700 font-bold" : "text-slate-600"}>
+                                {row.fechaLimiteOCStr}
+                              </span>
+                            )}
+                          </td>
 
-                          return (
-                            <td 
-                              key={`${row.id}-mes-${idx}`} 
-                              className={`p-3 text-right border-l border-slate-100 font-mono transition-all ${
-                                inventarioCero 
-                                  ? "bg-red-50/70 text-red-700 font-bold" 
-                                  : "text-slate-600 font-medium"
-                              }`}
-                            >
-                              <div className="flex flex-col justify-end">
-                                <span>{Math.round(mesProj.stockFinal).toLocaleString()}</span>
-                                {tieneArribo && (
-                                  <span className="text-[9px] text-blue-600 font-bold flex items-center gap-0.5 justify-end mt-0.5" title="Arribo planificado">
-                                    +{Math.round(mesProj.arriboInyectado).toLocaleString()}
-                                  </span>
-                                )}
-                              </div>
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    );
-                  })
-                ])}
+                          <td className="p-3 text-right font-black bg-emerald-50/30 text-emerald-900 border-r border-slate-200">
+                            {row.puntoRop > 0 ? (
+                              <span className="inline-flex items-center gap-1 text-emerald-700">
+                                <ArrowDownToLine size={12} className="text-emerald-500" />
+                                {Math.round(row.puntoRop).toLocaleString()}
+                              </span>
+                            ) : (
+                              <span className="text-slate-300 font-normal">---</span>
+                            )}
+                          </td>
+
+                          {row.proyeccionesPorMes.map((mesProj: any, idx: number) => {
+                            const tieneArribo = mesProj.arriboInyectado > 0;
+                            const inventarioCero = mesProj.stockFinal <= 0;
+
+                            return (
+                              <td 
+                                key={`${row.id}-mes-${idx}`} 
+                                className={`p-3 text-right border-l border-slate-100 font-mono transition-all ${
+                                  inventarioCero 
+                                    ? "bg-red-50/70 text-red-700 font-bold" 
+                                    : "text-slate-600 font-medium"
+                                }`}
+                              >
+                                <div className="flex flex-col justify-end">
+                                  <span>{Math.round(mesProj.stockFinal).toLocaleString()}</span>
+                                  {tieneArribo && (
+                                    <span className="text-[11px] text-blue-600 font-bold flex items-center gap-0.5 justify-end mt-0.5" title="Arribo planificado">
+                                      +{Math.round(mesProj.arriboInyectado).toLocaleString()}
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
+                  </Fragment>
+                ))}
               </tbody>
             </table>
           </div>

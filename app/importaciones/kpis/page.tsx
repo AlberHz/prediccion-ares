@@ -9,7 +9,7 @@ import {
 
 // 🗓️ CONFIGURACIÓN DE FECHA - JUNIO 2026 COMO MES EN CURSO
 const AÑO_ACTUAL = 2026;
-const MES_ACTUAL_NUM = 6; // Junio (0 = Ene, 5 = Jun)
+const MES_ACTUAL_NUM = 7; // Junio (0 = Ene, 5 = Jun)
 
 const DOCUMENTOS_SALIDA = new Set(["NS", "22", "23", "93", "TD"]);
 const NOMBRES_MESES = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"];
@@ -125,7 +125,7 @@ export default function GraficoPredictivoAresIA() {
     
     // ESCENARIOS DE DEMANDA
     const consumoAresIA = consumoNormal * 1.25;  
-    const consumoEstres = consumoNormal * 1.35;  
+    const consumoEstres = consumoNormal * 1.86;  
 
     // Mapeo exhaustivo de arribos (futuros y presentes del año actual)
     const arribosRealesPorMes: Record<number, number> = {};

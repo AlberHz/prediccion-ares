@@ -18,26 +18,36 @@ interface ModalConsumoProps {
 }
 
 function ModalConsumoPromedio({ producto, onClose, onSuccess }: ModalConsumoProps) {
-  const [nuevoConsumo, setNuevoConsumo] = useState<number>(producto?.custom_average_consumption || 0);
+  const [inputValue, setInputValue] = useState<string>("");
   const [guardando, setGuardando] = useState(false);
+
+  // Sincronizar de forma estricta el valor del producto al abrir el modal
+  useEffect(() => {
+    if (producto) {
+      setInputValue(String(producto.custom_average_consumption || 0));
+    }
+  }, [producto]);
 
   if (!producto) return null;
 
   const handleGuardar = async () => {
     setGuardando(true);
+    const valorNumerico = Math.max(0, parseInt(inputValue, 10) || 0);
+
     try {
       const { error } = await supabase
         .from("products")
-        .update({ custom_average_consumption: nuevoConsumo })
+        .update({ custom_average_consumption: valorNumerico })
         .eq("id", producto.id);
 
       if (error) throw error;
 
-      onSuccess(producto.id, nuevoConsumo);
+      // Retornar con éxito e inmediatez al componente padre
+      onSuccess(producto.id, valorNumerico);
       onClose();
     } catch (err) {
       console.error("Error al actualizar el consumo manual:", err);
-      alert("No se pudo guardar. ¡Asegúrate de haber creado la columna 'custom_average_consumption' en Supabase!");
+      alert("No se pudo guardar el valor. Revisa la conexión o la columna 'custom_average_consumption' en Supabase.");
     } finally {
       setGuardando(false);
     }
@@ -52,7 +62,7 @@ function ModalConsumoPromedio({ producto, onClose, onSuccess }: ModalConsumoProp
         
         <div className="mb-4">
           <span className="text-[9px] bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider inline-flex items-center gap-1">
-            <TrendingUp size={10} /> Herencia de Consumo
+            <TrendingUp size={10} /> Ajuste de Consumos Inflados
           </span>
           <h3 className="text-sm font-black text-slate-900 mt-1">Forzar Consumo SKU: {producto.code}</h3>
           <p className="text-[11px] text-slate-500 font-medium truncate mt-0.5">{producto.description}</p>
@@ -66,11 +76,11 @@ function ModalConsumoPromedio({ producto, onClose, onSuccess }: ModalConsumoProp
             type="number" 
             className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs font-bold font-mono text-purple-700 outline-none focus:bg-white focus:border-purple-300"
             placeholder="Ej: 350"
-            value={nuevoConsumo === 0 ? "" : nuevoConsumo}
-            onChange={(e) => setNuevoConsumo(Math.max(0, parseInt(e.target.value) || 0))}
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
           />
           <p className="text-[10px] text-slate-400 font-medium mt-1.5 leading-normal">
-            * Al escribir un valor mayor a 0, la IA ignorará que este código no tiene ventas actuales. Si lo dejas en <strong>0</strong>, volverá a calcularse por el historial.
+            * Al escribir un valor mayor a 0, se **sobreescribirá con máxima prioridad** cualquier historial de salidas reales o infladas. Si lo dejas en <strong>0</strong>, el planificador volverá a promediar basándose en todos los meses disponibles.
           </p>
         </div>
 
@@ -106,44 +116,45 @@ export default function ConsumosPromediosPage() {
   const [filtroFamilia, setFiltroFamilia] = useState("TODOS");
   const [productToEdit, setProductToEdit] = useState<any | null>(null);
 
-  useEffect(() => {
-    let isMounted = true;
+  async function fetchCatalog() {
+    try {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from("products")
+        .select("id, code, description, family, custom_average_consumption, active")
+        .eq("active", true);
 
-    async function fetchCatalog() {
-      try {
-        setLoading(true);
-        // NOTA: Recuerda crear primero esta columna en Supabase
-        const { data, error } = await supabase
-          .from("products")
-          .select("id, code, description, family, custom_average_consumption, active")
-          .eq("active", true);
+      if (error) throw error;
 
-        if (error) throw error;
-
-        if (isMounted && data) {
-          const procesados = data.map((p: any) => ({
-            id: p.id,
-            code: p.code ? String(p.code).trim() : "SIN CÓDIGO",
-            description: p.description ? String(p.description).trim() : "SIN DESCRIPCIÓN",
-            family: p.family ? String(p.family).trim() : "GENERAL",
-            custom_average_consumption: parseInt(p.custom_average_consumption) || 0,
-          }));
-          setProductos(procesados);
-        }
-      } catch (err) {
-        console.error("Error cargando catálogo para consumos:", err);
-      } finally {
-        if (isMounted) setLoading(false);
+      if (data) {
+        const procesados = data.map((p: any) => ({
+          id: p.id,
+          code: p.code ? String(p.code).trim() : "SIN CÓDIGO",
+          description: p.description ? String(p.description).trim() : "SIN DESCRIPCIÓN",
+          family: p.family ? String(p.family).trim() : "GENERAL",
+          custom_average_consumption: p.custom_average_consumption != null ? Number(p.custom_average_consumption) : 0,
+        }));
+        setProductos(procesados);
       }
+    } catch (err) {
+      console.error("Error cargando catálogo para consumos:", err);
+    } finally {
+      setLoading(false);
     }
+  }
 
+  useEffect(() => {
     fetchCatalog();
-    return () => { isMounted = false; };
   }, []);
 
   const handleUpdateSuccess = (id: string, nuevoConsumo: number) => {
     setProductos((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, custom_average_consumption: nuevoConsumo } : p))
+      prev.map((p) => {
+        if (p.id === id) {
+          return { ...p, custom_average_consumption: nuevoConsumo };
+        }
+        return p;
+      })
     );
   };
 
@@ -185,7 +196,7 @@ export default function ConsumosPromediosPage() {
         <TrendingUp size={20} className="text-purple-600" />
         <div>
           <h1 className="text-base font-black text-slate-900 leading-tight">Configuración de Consumos Promedios Manuales</h1>
-          <p className="text-[11px] text-slate-500 font-medium">Asigna consumos heredados para SKUs nuevos sin historial de movimientos.</p>
+          <p className="text-[11px] text-slate-500 font-medium">Asigna consumos fijos para sobreescribir históricos inflados o heredar demandas en SKUs nuevos.</p>
         </div>
       </div>
 
@@ -242,9 +253,9 @@ export default function ConsumosPromediosPage() {
                   </td>
                 </tr>,
                 dataAgrupada[familia].map((row) => {
-                  const tieneConsumoManual = row.custom_average_consumption > 0;
+                  const tieneConsumoManual = Number(row.custom_average_consumption) > 0;
                   return (
-                    <tr key={row.id} className="hover:bg-slate-50/80 transition-colors whitespace-nowrap">
+                    <tr key={`sku-${row.id}-${row.custom_average_consumption}`} className="hover:bg-slate-50/80 transition-colors whitespace-nowrap">
                       <td className="p-3 text-center border-r border-slate-100">
                         <button
                           onClick={() => setProductToEdit(row)}
@@ -256,7 +267,7 @@ export default function ConsumosPromediosPage() {
                       <td className="p-3 font-mono font-bold text-slate-900">{row.code}</td>
                       <td className="p-3 font-medium text-slate-600 truncate max-w-xl">{row.description}</td>
                       <td className={`p-3 text-right font-mono font-bold ${tieneConsumoManual ? "bg-purple-100 text-purple-950" : "bg-slate-50/50 text-slate-400"}`}>
-                        {row.custom_average_consumption.toLocaleString()} u/mes
+                        {Number(row.custom_average_consumption).toLocaleString()} u/mes
                       </td>
                       <td className="p-3 text-center">
                         {tieneConsumoManual ? (
@@ -278,9 +289,10 @@ export default function ConsumosPromediosPage() {
         </div>
       </div>
 
-      {/* 🔮 RENDERIZADO DEL MODAL */}
+      {/* MODAL */}
       {productToEdit && (
         <ModalConsumoPromedio
+          key={`modal-edit-${productToEdit.id}`}
           producto={productToEdit}
           onClose={() => setProductToEdit(null)}
           onSuccess={handleUpdateSuccess}
