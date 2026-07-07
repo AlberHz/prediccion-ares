@@ -250,7 +250,7 @@ serve(async (req) => {
       const fechaLimiteOC = new Date(fechaQuiebre)
       fechaLimiteOC.setDate(fechaLimiteOC.getDate() - leadTimeDias - 30)
 
-      // 🎯 CONDICIÓN ESPEJO PARA CLAVAR LOS 20 ITEMS EXACTOS
+      // 🎯 CONDICIÓN ESPEJO PARA CLAVAR LOS ITEMS EXACTOS
       let estadoAbastecimiento = "STOCK OK"
       if (demandaPredichaFinal === 0 && stockFisico === 0) {
         estadoAbastecimiento = "SIN MOVIMIENTO"
@@ -271,7 +271,7 @@ serve(async (req) => {
         coberturaMeses,
         mesQuiebre: quiebreRealDetectado ? mesQuiebreCalculado : "OK",
         fechaLimiteOCStr: quiebreRealDetectado ? fechaLimiteOC.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' }) : "---",
-        puntoRop: quiebreRealDetectado ? puntoRopCalculado : 0, // Idéntico a tu regla: p.puntoRop = quiebreRealDetectado ? puntoRopCalculado : 0
+        puntoRop: quiebreRealDetectado ? puntoRopCalculado : 0,
         estado: estadoAbastecimiento
       }
     })
@@ -298,7 +298,7 @@ serve(async (req) => {
             <strong style="color: #991b1b;"> COMPRAR YA:</strong> Se detectaron <strong>${comprarYa.length}</strong> productos en riesgo inmediato o cobertura insuficiente.
           </div>
           <div style="background: #fffbeb; border: 1px solid #fef3c7; padding: 12px; border-radius: 8px; margin-bottom: 8px;">
-            <strong style="color: #92400e;">POR REVISAR:</strong> <strong>${porRevisar.length}</strong> productos en observación preventiva.
+            <strong style="color: #92400e;">POR REVISAR:</strong> <strong>${porRevisar.length}</strong> productos en observation preventiva.
           </div>
           <div style="background: #f0fdf4; border: 1px solid #d1fae5; padding: 12px; border-radius: 8px;">
             <strong style="color: #065f46;">STOCK OK / ESTABLE:</strong> <strong>${stockOk.length}</strong> productos en estado estable/sin movimiento.
@@ -309,12 +309,13 @@ serve(async (req) => {
       </div>
     `
 
-    await fetch("https://api.resend.com/emails", {
+    // Realizar la petición HTTP hacia Resend controlando estrictamente la respuesta
+    const resendResponse = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${RESEND_API_KEY}` },
       body: JSON.stringify({
         from: "Ares Alertas <onboarding@resend.dev>",
-        to: ["jordihz.18@outlook.es","ahernandez@aresperu.com","aportugal@aresperu.com"],
+        to: ["jordihz.18@outlook.es"],
         subject: `REPORTE DE ABASTECIMIENTO DE IMPORTACIONES: ${comprarYa.length} Items Críticos`,
         html: emailHtml,
         attachments: [
@@ -325,8 +326,15 @@ serve(async (req) => {
       }),
     })
 
+    // Si Resend rechaza la petición, atrapamos el error textualmente para los logs de Supabase
+    if (!resendResponse.ok) {
+      const errorDetalle = await resendResponse.text()
+      throw new Error(`Resend rechazó el envío: ${errorDetalle}`)
+    }
+
     return new Response(JSON.stringify({ ok: true, procesados: productosAnalizados.length, comprarYa: comprarYa.length }), { headers: { "Content-Type": "application/json" } })
   } catch (error) {
-    return new Response(JSON.stringify({ error: error.message }), { status: 500 })
+    // Retornamos el error con status 500 para que se visualice inmediatamente en los logs rojos de Edge Functions
+    return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { "Content-Type": "application/json" } })
   }
 })
