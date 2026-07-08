@@ -287,25 +287,74 @@ serve(async (req) => {
 
     const prefijoFecha = fechaActual.toISOString().slice(0, 10)
 
+    // 🚀 MEJORA EXCLUSIVA DEL CUERPO DEL EMAIL HTML (DIRIGIDO A ALFREDO)
     const emailHtml = `
-      <div style="font-family: Arial, sans-serif; color: #334155; max-width: 650px; margin: 0 auto; border: 1px solid #e2e8f0; padding: 24px; border-radius: 12px; background-color: #ffffff;">
-        <h2 style="color: #0f172a; margin-bottom: 4px;">📋 Reporte de Alertas de Abastecimiento de Importaciones</h2>
-        <p style="font-size: 11px; color: #94a3b8; margin: 0; text-transform: uppercase;">Sincronización Avanzada con Predicciones</p>
-        <hr style="border: 0; border-top: 1px solid #f1f5f9; margin: 16px 0;" />
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
         
-        <div style="margin-bottom: 20px;">
-          <div style="background: #fef2f2; border: 1px solid #fee2e2; padding: 12px; border-radius: 8px; margin-bottom: 8px;">
-            <strong style="color: #991b1b;"> COMPRAR YA:</strong> Se detectaron <strong>${comprarYa.length}</strong> productos en riesgo inmediato o cobertura insuficiente.
+        <!-- Encabezado Estilizado -->
+        <div style="background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); padding: 32px 24px; color: #ffffff;">
+          <h2 style="margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.5px;">📋 Reporte de Alertas de Abastecimiento</h2>
+          <p style="margin: 6px 0 0 0; font-size: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px;">Sincronización Avanzada • Importaciones Ares</p>
+        </div>
+        
+        <!-- Contenido Principal -->
+        <div style="padding: 28px 24px;">
+          <p style="font-size: 15px; line-height: 1.6; color: #334155; margin-top: 0;">
+            Estimado <strong>Alfredo</strong>,<br>
+            <span style="color: #64748b; font-size: 14px;">Jefe de Logística</span>
+          </p>
+          
+          <p style="font-size: 14px; line-height: 1.5; color: #475569; margin-bottom: 24px;">
+            A continuación, se detalla el consolidado crítico del inventario automatizado correspondiente al día de hoy, <strong>${fechaFormat}</strong>. Se han adjuntado los 3 informes listos para optimizar la toma de decisiones y mitigar quiebres de stock:
+          </p>
+          
+          <!-- Resumen de Indicadores Ejecutivos -->
+          <div style="margin-bottom: 28px;">
+            
+            <!-- Alerta Crítica (Comprar Ya) -->
+            <div style="background-color: #fef2f2; border-left: 4px solid #ef4444; padding: 14px 16px; border-radius: 0 8px  8px 0; margin-bottom: 12px; display: table; width: 100%; box-sizing: border-box;">
+              <div style="display: table-cell; vertical-align: middle;">
+                <span style="color: #991b1b; font-weight: 700; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">🚨 COMPRAR YA</span>
+                <div style="margin-top: 2px; font-size: 13px; color: #7f1d1d;">Items con riesgo inmediato o cobertura insuficiente.</div>
+              </div>
+              <div style="display: table-cell; vertical-align: middle; text-align: right; width: 50px;">
+                <span style="background-color: #ef4444; color: #ffffff; padding: 4px 10px; font-size: 14px; font-weight: 700; border-radius: 6px; display: inline-block;">${comprarYa.length}</span>
+              </div>
+            </div>
+            
+            <!-- Alerta Preventiva (Por Revisar) -->
+            <div style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 14px 16px; border-radius: 0 8px 8px 0; margin-bottom: 12px; display: table; width: 100%; box-sizing: border-box;">
+              <div style="display: table-cell; vertical-align: middle;">
+                <span style="color: #92400e; font-weight: 700; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">⚠️ POR REVISAR</span>
+                <div style="margin-top: 2px; font-size: 13px; color: #78350f;">Items bajo observación y monitoreo preventivo.</div>
+              </div>
+              <div style="display: table-cell; vertical-align: middle; text-align: right; width: 50px;">
+                <span style="background-color: #f59e0b; color: #ffffff; padding: 4px 10px; font-size: 14px; font-weight: 700; border-radius: 6px; display: inline-block;">${porRevisar.length}</span>
+              </div>
+            </div>
+            
+            <!-- Estado Estable (Stock OK) -->
+            <div style="background-color: #f0fdf4; border-left: 4px solid #10b981; padding: 14px 16px; border-radius: 0 8px 8px 0; display: table; width: 100%; box-sizing: border-box;">
+              <div style="display: table-cell; vertical-align: middle;">
+                <span style="color: #065f46; font-weight: 700; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">✅ STOCK OK / ESTABLE</span>
+                <div style="margin-top: 2px; font-size: 13px; color: #064e3b;">SKUs con niveles óptimos de seguridad.</div>
+              </div>
+              <div style="display: table-cell; vertical-align: middle; text-align: right; width: 50px;">
+                <span style="background-color: #10b981; color: #ffffff; padding: 4px 10px; font-size: 14px; font-weight: 700; border-radius: 6px; display: inline-block;">${stockOk.length}</span>
+              </div>
+            </div>
+            
           </div>
-          <div style="background: #fffbeb; border: 1px solid #fef3c7; padding: 12px; border-radius: 8px; margin-bottom: 8px;">
-            <strong style="color: #92400e;">POR REVISAR:</strong> <strong>${porRevisar.length}</strong> productos en observation preventiva.
-          </div>
-          <div style="background: #f0fdf4; border: 1px solid #d1fae5; padding: 12px; border-radius: 8px;">
-            <strong style="color: #065f46;">STOCK OK / ESTABLE:</strong> <strong>${stockOk.length}</strong> productos en estado estable/sin movimiento.
+          
+          <div style="background-color: #f8fafc; border: 1px dashed #cbd5e1; padding: 14px; border-radius: 8px; text-align: center; font-size: 12px; color: #64748b;">
+            📎 Los reportes detallados se encuentran adjuntos individualmente en formato PDF.
           </div>
         </div>
-
-        <p style="font-size: 13px; color: #475569; line-height: 1.5;">Hola Equipo, se adjunta los <strong>3 documentos PDF</strong> para la gestión del abastecimiento, y evitar quiebres de stock.</p>
+        
+        <!-- Pie de Página -->
+        <div style="background-color: #f1f5f9; padding: 16px 24px; text-align: center; border-top: 1px solid #e2e8f0;">
+          <p style="margin: 0; font-size: 11px; color: #94a3b8;">Este es un informe automático generado por el Sistema de Inteligencia Predictiva de Ares Peru SAC.</p>
+        </div>
       </div>
     `
 
