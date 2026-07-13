@@ -1,16 +1,54 @@
 "use client";
+import React, { useState } from "react";
 import Link from "next/link"; // Usamos Link para navegación instantánea sin recargas
 import { motion } from "framer-motion";
 import { useGlobalData } from "@/lib/DataContext"; // Validamos el estado global
+import { supabase } from "@/lib/supabase"; // 💡 IMPORTANTE: Usamos tu cliente nativo centralizado
 import { 
   BrainCircuit, Truck, BarChart3, Clock, 
-  CloudUpload, ArrowRight, Activity, TrendingUp // 💡 Agregado para el módulo de Consumos Promedios
+  CloudUpload, ArrowRight, Activity, TrendingUp,
+  Mail, Loader2 
 } from "lucide-react";
 
-const MotionLink = motion(Link);
 export default function LaunchpadPage() {
   // Consumimos el contexto global. Al estar mapeado aquí, Next.js mantiene viva la memoria
   const { productos, loading } = useGlobalData();
+
+  // 💡 ESTADOS PARA EL BOTÓN DE ENVÍO MANUAL
+  const [enviando, setEnviando] = useState(false);
+  const [notificacion, setNotificacion] = useState<{ tipo: 'exito' | 'error', texto: string } | null>(null);
+
+  // 🚀 FUNCIÓN OPTIMIZADA USANDO EL SDK NATIVO DE SUPABASE
+  const handleEnviarInformeManual = async () => {
+    setEnviando(true);
+    setNotificacion(null);
+
+    try {
+      // El SDK maneja de forma automática las URLs, la Anon Key, la autorización y los pre-flights CORS
+      const { data, error } = await supabase.functions.invoke('alerta-abastecimiento', {
+        method: 'POST',
+        body: {}
+      });
+
+      // Si el servidor o la función retornan un error, lo atrapamos aquí
+      if (error) throw error;
+
+      setNotificacion({
+        tipo: 'exito',
+        texto: `¡Informe enviado a Alfredo con éxito! (${data?.comprarYa || 0} críticos).`
+      });
+      setTimeout(() => setNotificacion(null), 5000);
+
+    } catch (error: any) {
+      console.error("Error detallado al invocar la función:", error);
+      setNotificacion({
+        tipo: 'error',
+        texto: `No se pudo enviar: ${error.message || 'Error de comunicación o CORS.'}`
+      });
+    } finally {
+      setEnviando(false);
+    }
+  };
 
   const modules = [
     {
@@ -20,11 +58,10 @@ export default function LaunchpadPage() {
       icon: <BrainCircuit size={20} />,
       badge: "Motor Estadístico"
     },
-    // 💡 NUEVO MÓDULO INTEGRADO AQUÍ
     {
       title: "Consumos Promedios",
       description: "Cálculo, revisión y ajuste de promedios móviles e históricos para bases de reaprovisionamiento.",
-      path: "/importaciones/promedios", // Coincide exactamente con el sidebar
+      path: "/importaciones/promedios",
       icon: <TrendingUp size={20} />,
       badge: "Cálculos"
     },
@@ -66,7 +103,7 @@ export default function LaunchpadPage() {
       <div className="max-w-5xl mx-auto w-full space-y-10">
         
         {/* ENCABEZADO DE BIENVENIDA */}
-        <div className="space-y-2 border-b border-slate-100 pb-6 flex justify-between items-end">
+        <div className="space-y-2 border-b border-slate-100 pb-6 flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-slate-900">
               Panel de Operaciones
@@ -76,18 +113,60 @@ export default function LaunchpadPage() {
             </p>
           </div>
           
-          {/* Indicador de estado de sincronización global */}
-          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 bg-slate-50 border border-slate-200/60 px-2 py-1 rounded-md">
-            <div className={`w-1.5 h-1.5 rounded-full ${loading ? "bg-amber-500 animate-spin" : "bg-emerald-500"}`} />
-            {loading ? "Sincronizando caché..." : `${productos?.length || 0} SKUs en memoria`}
+          {/* CONTENEDOR DE ACCIONES */}
+          <div className="flex flex-col items-end gap-2 w-full sm:w-auto relative">
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
+              
+              <button
+                onClick={handleEnviarInformeManual}
+                disabled={enviando}
+                className={`text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 px-3 py-1.5 rounded-md border transition-all duration-150 ${
+                  enviando 
+                    ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed" 
+                    : "bg-slate-900 text-white border-slate-900 hover:bg-slate-800 cursor-pointer shadow-xs"
+                }`}
+              >
+                {enviando ? (
+                  <>
+                    <Loader2 size={12} className="animate-spin" />
+                    Enviando a Alfredo...
+                  </>
+                ) : (
+                  <>
+                    <Mail size={12} />
+                    Enviar informe por correo electrónico
+                  </>
+                )}
+              </button>
+
+              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 bg-slate-50 border border-slate-200/60 px-2.5 py-1.5 rounded-md h-[28px]">
+                <div className={`w-1.5 h-1.5 rounded-full ${loading ? "bg-amber-500 animate-spin" : "bg-emerald-500"}`} />
+                {loading ? "Sincronizando caché..." : `${productos?.length || 0} SKUs en memoria`}
+              </div>
+            </div>
+
+            {/* NOTIFICACIONES FLOTANTES */}
+            {notificacion && (
+              <motion.div 
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                className={`absolute top-9 z-10 text-[11px] font-medium px-3 py-1.5 rounded-md border shadow-xs max-w-xs text-right whitespace-nowrap ${
+                  notificacion.tipo === 'exito' 
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-700' 
+                    : 'bg-red-50 border-red-200 text-red-700'
+                }`}
+              >
+                {notificacion.texto}
+              </motion.div>
+            )}
           </div>
         </div>
 
-        {/* CONTENEDOR DE TARJETAS / MÓDULOS */}
+        {/* CONTENEDOR DE TARJETAS */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           {modules.map((mod, i) => (
-            <MotionLink key={mod.path} href={mod.path} passHref legacyBehavior>
-              <motion.a
+            <Link key={mod.path} href={mod.path} passHref className="block">
+              <motion.div
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.05, duration: 0.3 }}
@@ -115,13 +194,13 @@ export default function LaunchpadPage() {
                 <div className="flex justify-end mt-4">
                   <ArrowRight size={14} className="text-slate-400 group-hover:text-white group-hover:translate-x-1 transition-all" />
                 </div>
-              </motion.a>
-            </MotionLink>
+              </motion.div>
+            </Link>
           ))}
         </div>
       </div>
 
-      {/* FOOTER INTERNO DEL LAUNCHPAD */}
+      {/* FOOTER */}
       <div className="max-w-5xl mx-auto w-full pt-10 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4 text-[10px] font-medium text-slate-400 tracking-wider">
         <div className="flex items-center gap-4">
           <span className="flex items-center gap-1"><Activity size={12} /> Servidores estables</span>
