@@ -176,7 +176,7 @@ export default function ModuloPredicciones() {
 
         const demandaConIncremento = promedioHistoricoCrudo * 1.30; 
         let factorTendenciaAlcista5 = 1.28 * desviaciónEstandar;
-        const colchonMaximoPermitido = demandaConIncremento * 0.25;
+        const colchonMaximoPermitido = demandaConIncremento * 0.20;
         if (factorTendenciaAlcista5 > colchonMaximoPermitido) {
           factorTendenciaAlcista5 = colchonMaximoPermitido;
         }
@@ -337,8 +337,8 @@ export default function ModuloPredicciones() {
               value={mostrarOcultos ? "OCULTOS" : "ACTIVOS"}
               onChange={(e) => setMostrarOcultos(e.target.value === "OCULTOS")}
             >
-              <option value="ACTIVOS">🟢 SKU ACTIVOS</option>
-              <option value="OCULTOS">⚫ SKUS ARCHIVADOS</option>
+              <option value="ACTIVOS">SKU ACTIVOS</option>
+              <option value="OCULTOS">SKUS ARCHIVADOS</option>
             </select>
           </div>
 

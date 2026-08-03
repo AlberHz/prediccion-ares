@@ -1,538 +1,597 @@
 "use client";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, Fragment } from "react";
 import { supabase } from "@/lib/supabase";
-import { Search, ShoppingCart, ArrowRight, FileSpreadsheet, LineChart as ChartIcon, AlertTriangle, CheckCircle2, Clock } from "lucide-react";
-import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, Label } from "recharts";
+import { Search, ArrowDownToLine, Ship, TrendingUp, EyeOff, Eye, Layers, Sparkles } from "lucide-react";
 
-const DOCUMENTOS_SALIDA = ["NS", "22", "23", "93", "TD"];
-const NOMBRES_MESES = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"];
-
-export default function PlanificadorAbastecimientoAres() {
+export default function ModuloPredicciones() {
   const [productos, setProductos] = useState<any[]>([]);
-  const [busqueda, setBusqueda] = useState("");
-  const [mostrarDropdown, setMostrarDropdown] = useState(false);
-  const [skuSeleccionadoId, setSkuSeleccionadoId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [filtroCriticidad, setFiltroCriticidad] = useState<string>("TODOS");
+  const [search, setSearch] = useState("");
+  const [filtroEstado, setFiltroEstado] = useState("TODOS");
+  const [filtroFamilia, setFiltroFamilia] = useState("TODOS");
+  const [mostrarOcultos, setMostrarOcultos] = useState(false); 
 
-  // 🗓️ CONFIGURACIÓN DE FECHA DINÁMICA DE REFERENCIA (Alineado con Predicciones)
+  // 🗓️ CONFIGURACIÓN DE FECHA 100% DINÁMICA (Año 2026 en curso)
   const fechaActualComputada = useMemo(() => new Date(), []);
   const AÑO_ACTUAL = fechaActualComputada.getFullYear(); 
-  const MES_ACTUAL_JS = fechaActualComputada.getMonth(); 
+  const MES_ACTUAL_JS = fechaActualComputada.getMonth();   
+
+  const DOCUMENTOS_SALIDA = ["NS", "22", "23", "93", "TD"];
 
   useEffect(() => {
+    let isMounted = true;
+    
+    async function fetchDataReal() {
+      try {
+        const { data: dbProducts, error: errProd } = await supabase
+          .from("products")
+          .select("id, code, description, family, lead_time, stock, active, custom_average_consumption");
+        const { data: dbArrivals, error: errArr } = await supabase
+          .from("arrivals")
+          .select("*");
+
+        if (errProd) throw errProd;
+        if (errArr) throw errArr;
+
+        let todosLosMovimientos: any[] = [];
+        let desde = 0;
+        let hasta = 999;
+        let tieneMas = true;
+
+        while (tieneMas) {
+          const { data: chunk, error: errMov } = await supabase
+            .from("movements")
+            .select("*")
+            .range(desde, hasta);
+
+          if (errMov) throw errMov;
+
+          if (chunk && chunk.length > 0) {
+            todosLosMovimientos = [...todosLosMovimientos, ...chunk];
+            if (chunk.length < 1000) {
+              tieneMas = false;
+            } else {
+              desde += 1000;
+              hasta += 1000;
+            }
+          } else {
+            tieneMas = false;
+          }
+        }
+
+        if (!isMounted) return;
+
+        const datosConsolidados = (dbProducts || []).map((p: any) => {
+          const productUUID = p.id; 
+          const historialDelSku = todosLosMovimientos.filter((m: any) => m.product_id === productUUID);
+          
+          // Filtramos arribos sin importar estado aquí, la lógica de simulación separará por status
+          const arribosDelSku = dbArrivals
+            ? dbArrivals.filter((a: any) => a.product_id === productUUID)
+            : [];
+
+          return {
+            id: productUUID,
+            code: p.code ? String(p.code).trim() : "SIN CÓDIGO",
+            description: p.description ? String(p.description).trim() : "SIN DESCRIPCIÓN",
+            family: p.family ? String(p.family).trim() : "GENERAL",
+            lead_time: parseInt(p.lead_time, 10) || 0,
+            stockFisico: Number(p.stock || 0),
+            active: p.active !== false, 
+            custom_average_consumption: Number(p.custom_average_consumption || 0),
+            movimientos: historialDelSku,
+            arribos: arribosDelSku
+          };
+        });
+
+        setProductos(datosConsolidados);
+      } catch (err) {
+        console.error("Error sincronizando base de datos Ares:", err);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    }
+
     fetchDataReal();
+    return () => { isMounted = false; };
   }, []);
 
-  async function fetchDataReal() {
-    setLoading(true);
+  const deshabilitarYArchivarSku = async (productId: string, skuCode: string) => {
+    const confirmar = window.confirm(`¿Confirmas que deseas ocultar el SKU [${skuCode}]?`);
+    if (!confirmar) return;
+    setProductos((prev) => prev.map((p) => (p.id === productId ? { ...p, active: false } : p)));
     try {
-      // 🟢 FILTRAR SÓLO SKUS ACTIVOS
-      const { data: dbProducts, error: errProd } = await supabase
-        .from("products")
-        .select("id, code, description, family, lead_time, stock, active, custom_average_consumption")
-        .eq("active", true);
-
-      const { data: dbArrivals, error: errArr } = await supabase.from("arrivals").select("*");
-
-      if (errProd) throw errProd;
-      if (errArr) throw errArr;
-
-      let todosLosMovimientos: any[] = [];
-      let desde = 0;
-      let hasta = 999;
-      let tieneMas = true;
-
-      while (tieneMas) {
-        const { data: chunk, error: errMov } = await supabase.from("movements").select("*").range(desde, hasta);
-        if (errMov) throw errMov;
-        if (chunk && chunk.length > 0) {
-          todosLosMovimientos = [...todosLosMovimientos, ...chunk];
-          if (chunk.length < 1000) tieneMas = false;
-          else { desde += 1000; hasta += 1000; }
-        } else { tieneMas = false; }
-      }
-
-      const datosConsolidados = (dbProducts || []).map((p: any) => {
-        const productUUID = p.id;
-        const historialDelSku = todosLosMovimientos.filter((m: any) => m.product_id === productUUID);
-        const arribosDelSku = dbArrivals ? dbArrivals.filter((a: any) => a.product_id === productUUID && a.status === "PENDIENTE") : [];
-
-        return {
-          id: productUUID,
-          code: p.code ? String(p.code).trim() : "SIN CÓDIGO",
-          description: p.description ? String(p.description).trim() : "SIN DESCRIPCIÓN",
-          family: p.family ? String(p.family).trim() : "GENERAL",
-          lead_time: parseInt(p.lead_time) || 0,
-          stockFisicoActual: Number(p.stock || 0),
-          custom_average_consumption: parseInt(p.custom_average_consumption) || 0,
-          movimientos: historialDelSku,
-          arribos: arribosDelSku
-        };
-      });
-
-      setProductos(datosConsolidados);
-      if (datosConsolidados.length > 0) {
-        setSkuSeleccionadoId(datosConsolidados[0].id);
-        setBusqueda(`[${datosConsolidados[0].code}] ${datosConsolidados[0].description}`);
-      }
+      await supabase.from("products").update({ active: false }).eq("id", productId);
     } catch (err) {
-      console.error("Error sincronizando base de datos Ares:", err);
-    } finally {
-      setLoading(false);
+      console.error(err);
     }
-  }
+  };
 
-  // --- EXPLOSIÓN DE REQUERIMIENTOS CON LÓGICA DE PREDICCIONES (PROMEDIO + 25% GLOBAL) ---
-  const analisisAbastecimiento = useMemo(() => {
-    const listadoMaestroOCs: any[] = [];
-    const curvasPorProducto: Record<string, any[]> = {};
+  const reestablecerSku = async (productId: string, skuCode: string) => {
+    const confirmar = window.confirm(`¿Deseas restaurar el SKU [${skuCode}]?`);
+    if (!confirmar) return;
+    setProductos((prev) => prev.map((p) => (p.id === productId ? { ...p, active: true } : p)));
+    try {
+      await supabase.from("products").update({ active: true }).eq("id", productId);
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
-    // Cabeceras de simulación de 12 meses idéntico a predicciones
-    const mesesHeaders: any[] = [];
+  const mesesHeaders = useMemo(() => {
+    const nombresMeses = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"];
+    const listaHeaders = [];
+    
     for (let i = 0; i < 12; i++) {
-      const fFutura = new Date(AÑO_ACTUAL, MES_ACTUAL_JS + i, 1);
-      mesesHeaders.push({ mNum: fFutura.getMonth(), aNum: fFutura.getFullYear() });
+      const fechaFutura = new Date(AÑO_ACTUAL, MES_ACTUAL_JS + i, 1);
+      const mNum = fechaFutura.getMonth();
+      const aNum = fechaFutura.getFullYear();
+      
+      listaHeaders.push({ 
+        id: `${aNum}-${mNum}`, 
+        nombre: nombresMeses[mNum], 
+        mesNum: mNum, 
+        año: aNum 
+      });
     }
+    return listaHeaders;
+  }, [AÑO_ACTUAL, MES_ACTUAL_JS]);
 
-    productos.forEach((item) => {
-      const stockFisicoActual = item.stockFisicoActual;
-      const leadTimeDias = item.lead_time;
-      const leadTimeMeses = leadTimeDias / 30;
+  const dataProcesada = useMemo(() => {
+    return productos
+      .filter((p) => (mostrarOcultos ? !p.active : p.active))
+      .map(item => {
+        const stockFisico = item.stockFisico;
+        const leadTimeDias = item.lead_time;
+        const leadTimeMeses = leadTimeDias / 30;
 
-      const salidasValidas = item.movimientos.filter((m: any) => {
-        const tipoDoc = String(m.type || "").trim().toUpperCase();
-        const codTrans = String(m.transaction_code || "").trim().toUpperCase();
-        return DOCUMENTOS_SALIDA.includes(tipoDoc) || DOCUMENTOS_SALIDA.includes(codTrans);
-      });
-
-      const historialPorMes: { [key: string]: number } = {};
-      salidasValidas.forEach((m: any) => {
-        const fechaObj = m.date ? new Date(m.date) : new Date(m.created_at);
-        const llaveMes = `${fechaObj.getFullYear()}-${fechaObj.getMonth()}`;
-        historialPorMes[llaveMes] = (historialPorMes[llaveMes] || 0) + Math.abs(Number(m.quantity || 0));
-      });
-
-      const cantidadesMensuales = Object.values(historialPorMes);
-      const totalMesesPeriodo = cantidadesMensuales.length > 0 ? cantidadesMensuales.length : 1;
-      const unidadesTotalesSalida = cantidadesMensuales.reduce((sum, val) => sum + val, 0);
-
-      // 🌟 REGLA DE CONSUMO IA (PROMEDIO + INCREMENTO ~25% MEDIANTE VARIANZA)
-      const promedioMensualReal = item.custom_average_consumption > 0 
-        ? item.custom_average_consumption 
-        : (unidadesTotalesSalida / totalMesesPeriodo);
-
-      const varianza = cantidadesMensuales.length > 1
-        ? cantidadesMensuales.reduce((sum, val) => sum + Math.pow(val - promedioMensualReal, 2), 0) / (cantidadesMensuales.length - 1)
-        : 0;
-      const desviaciónEstandar = Math.sqrt(varianza);
-
-      const demandaConIncremento = promedioMensualReal * 1.20; 
-      let factorTendenciaAlcista5 = 1.28 * desviaciónEstandar;
-      const colchonMaximoPermitido = demandaConIncremento * 0.25;
-      if (factorTendenciaAlcista5 > colchonMaximoPermitido) {
-        factorTendenciaAlcista5 = colchonMaximoPermitido;
-      }
-
-      const demandaPredichaFinal = promedioMensualReal > 0 ? demandaConIncremento + factorTendenciaAlcista5 : 0;
-      const loteSugeridoEstandar = demandaPredichaFinal > 0 ? (demandaPredichaFinal * leadTimeMeses) * 1.15 : 0;
-
-      // Reconstrucción del Pasado para Gráfico
-      const datosCronologicosGrafico: any[] = [];
-      let stockIterativoPasado = stockFisicoActual;
-      for (let m = MES_ACTUAL_JS - 1; m >= Math.max(0, MES_ACTUAL_JS - 4); m--) {
-        const salidasReales = historialPorMes[`${AÑO_ACTUAL}-${m}`] || 0;
-        stockIterativoPasado += salidasReales;
-        datosCronologicosGrafico.unshift({ 
-          mes: `${NOMBRES_MESES[m]} '${String(AÑO_ACTUAL).slice(-2)}`, 
-          stockProyectado: Math.max(0, stockIterativoPasado), 
-          velocidadConsumo: salidasReales, 
-          cantidadArribo: 0,
-          tipo: "REAL" 
+        const salidasValidas = item.movimientos.filter((m: any) => {
+          const tipoDoc = String(m.type || "").trim().toUpperCase();
+          const codTrans = String(m.transaction_code || "").trim().toUpperCase();
+          return DOCUMENTOS_SALIDA.includes(tipoDoc) || DOCUMENTOS_SALIDA.includes(codTrans);
         });
-      }
 
-      // Simulación de Línea de Tiempo hacia el Futuro (Ventana de 12 meses de predicciones)
-      let stockSimulado = stockFisicoActual;
-      let contadorOC = 0;
-      const ocsDelProducto: any[] = [];
+        const historialPorMes: { [key: string]: number } = {};
+        salidasValidas.forEach((m: any) => {
+          const fechaObj = m.date ? new Date(m.date) : new Date(m.created_at);
+          const llaveMes = `${fechaObj.getFullYear()}-${fechaObj.getMonth()}`;
+          historialPorMes[llaveMes] = (historialPorMes[llaveMes] || 0) + Math.abs(Number(m.quantity || 0));
+        });
 
-      if (demandaPredichaFinal > 0) {
-        mesesHeaders.forEach((m, idx) => {
+        const cantidadesMensuales = Object.values(historialPorMes);
+        const totalMesesPeriodo = cantidadesMensuales.length > 0 ? cantidadesMensuales.length : 1;
+        const unidadesTotalesSalida = cantidadesMensuales.reduce((sum, val) => sum + val, 0);
+        
+        const promedioHistoricoCrudo = unidadesTotalesSalida / totalMesesPeriodo;
+
+        const promedioMensualReal = item.custom_average_consumption > 0 
+          ? item.custom_average_consumption 
+          : promedioHistoricoCrudo;
+
+        const varianza = cantidadesMensuales.length > 1
+          ? cantidadesMensuales.reduce((sum, val) => sum + Math.pow(val - promedioHistoricoCrudo, 2), 0) / (cantidadesMensuales.length - 1)
+          : 0;
+        const desviaciónEstandar = Math.sqrt(varianza);
+
+        const demandaConIncremento = promedioHistoricoCrudo * 1.30; 
+        let factorTendenciaAlcista5 = 1.28 * desviaciónEstandar;
+        const colchonMaximoPermitido = demandaConIncremento * 0.25;
+        if (factorTendenciaAlcista5 > colchonMaximoPermitido) {
+          factorTendenciaAlcista5 = colchonMaximoPermitido;
+        }
+
+        const demandaPredichaFinal = item.custom_average_consumption > 0 
+          ? item.custom_average_consumption 
+          : (promedioHistoricoCrudo > 0 ? demandaConIncremento + factorTendenciaAlcista5 : 0);
+
+        // 📥 ARRIBOS REALES (Inyectados por el usuario)
+        const arribosInyectadosReales = item.arribos.filter((a: any) => a.status !== "SIMULADO");
+        const totalArribosReales = arribosInyectadosReales.reduce((sum: number, a: any) => sum + Number(a.quantity || 0), 0);
+        
+        const inventarioVirtual = stockFisico + totalArribosReales;
+        const coberturaMeses = demandaPredichaFinal > 0 ? inventarioVirtual / demandaPredichaFinal : 0;
+        const puntoRopCalculado = demandaPredichaFinal > 0 ? (demandaPredichaFinal * leadTimeMeses) * 1.15 : 0;
+
+        let stockSimulado = stockFisico;
+        let mesQuiebreCalculado = "OK";
+        let yaQuebro = false;
+        let fechaQuiebre = new Date(AÑO_ACTUAL, MES_ACTUAL_JS + 11, 28); 
+
+        // 🔄 SIMULACIÓN DE ARRIBOS CRONOLÓGICOS
+        const proyeccionesPorMes = mesesHeaders.map((m) => {
+          // Filtrar tus arribos reales programados para este mes específico
           const arribosEsteMes = item.arribos.filter((a: any) => {
             const fechaEta = a.eta_date ? new Date(a.eta_date) : null;
-            return fechaEta && fechaEta.getMonth() === m.mNum && fechaEta.getFullYear() === m.aNum;
+            return fechaEta && 
+                   fechaEta.getMonth() === m.mesNum && 
+                   fechaEta.getFullYear() === m.año && 
+                   a.status !== "SIMULADO";
           });
-          const entradasOCReales = arribosEsteMes.reduce((sum: number, curr: any) => sum + Number(curr.quantity || 0), 0);
 
-          // Sumar arribos reales del mes en curso simulado
-          stockSimulado += entradasOCReales;
-
-          // Sumar ingresos simulación de OCs calculadas en iteraciones previas que llegan ESTE mes
-          const ingresosDeOcSimuladas = ocsDelProducto
-            .filter(o => o.mesAbsolutoArribo === idx)
-            .reduce((sum, curr) => sum + curr.cantidadAComprar, 0);
-          stockSimulado += ingresosDeOcSimuladas;
-
-          // Restar Consumo Esperado
-          const llaveMesActual = `${m.aNum}-${m.mNum}`;
+          const entradasInyectadasReal = arribosEsteMes.reduce((sum: number, curr: any) => sum + Number(curr.quantity || 0), 0);
+          
+          const llaveMesActual = `${m.año}-${m.mesNum}`;
           const consumosEfectivosReales = historialPorMes[llaveMesActual] || 0;
-          const demandaEfectivaEsteMes = (m.mNum === MES_ACTUAL_JS && m.aNum === AÑO_ACTUAL)
+          
+          const demandaEfectivaEsteMes = (m.mesNum === MES_ACTUAL_JS && m.año === AÑO_ACTUAL)
             ? Math.max(consumosEfectivosReales, demandaPredichaFinal)
             : demandaPredichaFinal;
 
-          stockSimulado -= demandaEfectivaEsteMes;
+          // Primero sumamos lo físico + lo que tú inyectaste real - la demanda calculada
+          stockSimulado = stockSimulado + entradasInyectadasReal - demandaEfectivaEsteMes;
 
-          // 🚨 GATILLO DE QUIEBRE: SI CAE A 0 O MENOS, EMITIMOS OC PARA SALVAR EL MES
+          let cantidadSimuladaSugerida = 0;
+
+          // Si el stock cae a cero o menos, el algoritmo detecta el quiebre y simula una inyección teórica
           if (stockSimulado <= 0) {
-            contadorOC++;
-            
-            // LÓGICA DE EMISIÓN: 1 mes antes del Quiebre menos el Lead Time
-            const fechaQuiebreEstimada = new Date(m.aNum, m.mNum, 1);
-            const fechaLimiteOC = new Date(fechaQuiebreEstimada);
-            fechaLimiteOC.setDate(fechaLimiteOC.getDate() - leadTimeDias - 30); // Resta los días de leadtime + 30 días (1 mes antes)
-
-            let etiquetaLanzamiento = fechaLimiteOC.toLocaleDateString('es-ES', { month: 'short', year: '2-digit' }).toUpperCase();
-            let criticidad = "PLANIFICADO";
-
-            if (fechaLimiteOC <= fechaActualComputada) {
-              etiquetaLanzamiento = `IMMEDIATO (Debió ser ${NOMBRES_MESES[fechaLimiteOC.getMonth()]} '${String(fechaLimiteOC.getFullYear()).slice(-2)})`;
-              criticidad = "CRITICO";
-            } else if (fechaLimiteOC.getFullYear() > AÑO_ACTUAL) {
-              criticidad = "FUTURO";
+            if (!yaQuebro) {
+              mesQuiebreCalculado = `${m.nombre} '${String(m.año).slice(-2)}`;
+              fechaQuiebre = new Date(m.año, m.mesNum, 1);
+              yaQuebro = true;
             }
-
-            const nuevaOC = {
-              id: `${item.id}-oc-${contadorOC}`,
-              product_uuid: item.id,
-              code: item.code,
-              description: item.description,
-              family: item.family,
-              stockInicialFisico: stockFisicoActual,
-              promedioConsumo: Math.round(demandaPredichaFinal),
-              numeroOrdenTexto: `OC #${contadorOC}`,
-              mesQuiebreTexto: `${NOMBRES_MESES[m.mNum]} '${String(m.aNum).slice(-2)}`,
-              mesLanzamientoTexto: etiquetaLanzamiento,
-              mesAbsolutoArribo: idx, // Llega exactamente en el mes de quiebre para salvarlo
-              cantidadAComprar: Math.round(loteSugeridoEstandar),
-              leadTimeDias,
-              criticidad
-            };
-
-            ocsDelProducto.push(nuevaOC);
-            listadoMaestroOCs.push(nuevaOC);
-
-            // Inyectamos de inmediato el lote sugerido para levantar la simulación del stock
-            stockSimulado += loteSugeridoEstandar;
+            // Cantidad sugerida necesaria para volver a recuperar el nivel ROP ideal
+            cantidadSimuladaSugerida = Math.abs(stockSimulado) + (puntoRopCalculado > 0 ? puntoRopCalculado : demandaPredichaFinal);
+            stockSimulado = (puntoRopCalculado > 0 ? puntoRopCalculado : demandaPredichaFinal);
           }
 
-          // Guardar curvas para el gráfico Recharts
-          datosCronologicosGrafico.push({
-            mes: `${NOMBRES_MESES[m.mNum]} '${String(m.aNum).slice(-2)}`,
-            stockProyectado: Math.max(0, Math.round(stockSimulado)),
-            velocidadConsumo: Math.round(demandaEfectivaEsteMes),
-            cantidadArribo: entradasOCReales,
-            cantidadIngresoSimulado: ocsDelProducto.filter(o => o.mesAbsolutoArribo === idx).reduce((sum, c) => sum + c.cantidadAComprar, 0),
-            tipo: "PROYECCION"
-          });
+          return {
+            stockFinal: Math.max(0, stockSimulado),
+            demandaPredicha: demandaEfectivaEsteMes,
+            arriboInyectadoReal: entradasInyectadasReal,       // Fijo/Tuyo
+            arriboSimuladoAlgoritmo: cantidadSimuladaSugerida // Calculado/Simulación
+          };
         });
+
+        const quiebreRealDetectado = mesQuiebreCalculado !== "OK";
+
+        const fechaLimiteOC = new Date(fechaQuiebre);
+        fechaLimiteOC.setDate(fechaLimiteOC.getDate() - leadTimeDias - 30); 
+
+        let estadoAbastecimiento = "STOCK OK";
+        const hoy = new Date();
+
+        if (demandaPredichaFinal === 0 && stockFisico === 0) {
+          estadoAbastecimiento = "SIN MOVIMIENTO";
+        } else if (demandaPredichaFinal > 0 && quiebreRealDetectado && fechaLimiteOC <= hoy) {
+          estadoAbastecimiento = "COMPRAR YA";
+        } else if (demandaPredichaFinal > 0 && (coberturaMeses <= (leadTimeMeses + 1.0) || quiebreRealDetectado)) {
+          estadoAbastecimiento = "POR REVISAR";
+        }
+
+        return {
+          ...item,
+          enTránsito: totalArribosReales,
+          promedioReal: promedioMensualReal,
+          consumoIA: demandaPredichaFinal, 
+          mesesActivos: totalMesesPeriodo,
+          coberturaMeses,
+          mesQuiebre: mesQuiebreCalculado,
+          fechaLimiteOCStr: quiebreRealDetectado ? fechaLimiteOC.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' }) : "---",
+          puntoRop: quiebreRealDetectado ? puntoRopCalculado : 0, 
+          proyeccionesPorMes,
+          estado: estadoAbastecimiento
+        };
+      })
+      .filter(i => {
+        const cumpleBusqueda = i.code.toLowerCase().includes(search.toLowerCase()) || i.description.toLowerCase().includes(search.toLowerCase());
+        const cumpleEstado = filtroEstado === "TODOS" || i.estado === filtroEstado;
+        const cumpleFamilia = filtroFamilia === "TODOS" || i.family === filtroFamilia;
+        return cumpleBusqueda && cumpleEstado && cumpleFamilia;
+      });
+  }, [productos, search, filtroEstado, filtroFamilia, mesesHeaders, AÑO_ACTUAL, MES_ACTUAL_JS, mostrarOcultos]);
+
+  const dataAgrupadaPorFamilia = useMemo(() => {
+    return dataProcesada.reduce((acc: { [key: string]: any[] }, item) => {
+      const familia = item.family || "GENERAL";
+      if (!acc[familia]) {
+        acc[familia] = [];
       }
+      acc[familia].push(item);
+      return acc;
+    }, {});
+  }, [dataProcesada]);
 
-      if (ocsDelProducto.length === 0) {
-        listadoMaestroOCs.push({
-          id: `${item.id}-ok`,
-          product_uuid: item.id,
-          code: item.code,
-          description: item.description,
-          family: item.family,
-          stockInicialFisico: stockFisicoActual,
-          promedioConsumo: Math.round(demandaPredichaFinal),
-          numeroOrdenTexto: "SIN REQUERIMIENTO",
-          mesQuiebreTexto: "ESTABLE",
-          mesLanzamientoTexto: "AL DÍA",
-          cantidadAComprar: 0,
-          leadTimeDias,
-          criticidad: "OPTIMO"
-        });
-      }
+  const resumenMétricas = useMemo(() => {
+    const totalItems = dataProcesada.length;
+    if (totalItems === 0) return { stockTotal: 0, arribosTotal: 0, ropTotal: 0, promedioConsumoIA: 0, promedioCobertura: 0 };
 
-      curvasPorProducto[item.id] = datosCronologicosGrafico;
-    });
+    const stockTotal = dataProcesada.reduce((sum, item) => sum + item.stockFisico, 0);
+    const arribosTotal = dataProcesada.reduce((sum, item) => sum + item.enTránsito, 0);
+    const ropTotal = dataProcesada.reduce((sum, item) => sum + item.puntoRop, 0);
+    const promedioConsumoIA = dataProcesada.reduce((sum, item) => sum + item.consumoIA, 0) / totalItems;
+    const promedioCobertura = dataProcesada.reduce((sum, item) => sum + item.coberturaMeses, 0) / totalItems;
 
-    return { listadoMaestroOCs, curvasPorProducto };
-  }, [productos, AÑO_ACTUAL, MES_ACTUAL_JS, fechaActualComputada]);
+    return { stockTotal, arribosTotal, ropTotal, promedioConsumoIA, promedioCobertura };
+  }, [dataProcesada]);
 
-  // Filtrado de la tabla según buscador y estatus
-  const ocsFiltradas = useMemo(() => {
-    let lista = analisisAbastecimiento.listadoMaestroOCs;
-    if (busqueda && !mostrarDropdown) {
-      lista = lista.filter(o => o.code.toLowerCase().includes(busqueda.toLowerCase()) || o.description.toLowerCase().includes(busqueda.toLowerCase()));
-    }
-    if (filtroCriticidad === "TODOS") return lista;
-    if (filtroCriticidad === "CRITICO") return lista.filter(o => o.criticidad === "CRITICO");
-    if (filtroCriticidad === "PLANIFICADO") return lista.filter(o => o.criticidad === "PLANIFICADO");
-    return lista.filter(o => o.criticidad === "OPTIMO");
-  }, [analisisAbastecimiento, filtroCriticidad, busqueda, mostrarDropdown]);
-
-  const conteoEstatus = useMemo(() => {
-    const lista = analisisAbastecimiento.listadoMaestroOCs;
-    return {
-      criticos: lista.filter(o => o.criticidad === "CRITICO").length,
-      planificados: lista.filter(o => o.criticidad === "PLANIFICADO").length,
-      optimos: lista.filter(o => o.criticidad === "OPTIMO").length,
-    };
-  }, [analisisAbastecimiento]);
-
-  const analisisSku = useMemo(() => {
-    if (!skuSeleccionadoId) return null;
-    const item = productos.find(p => p.id === skuSeleccionadoId);
-    if (!item) return null;
-
-    return {
-      ...item,
-      alertasMaturacion: (analisisAbastecimiento.listadoMaestroOCs || []).filter(o => o.product_uuid === skuSeleccionadoId && o.cantidadAComprar > 0),
-      proyeccionesPorMes: analisisAbastecimiento.curvasPorProducto[skuSeleccionadoId] || []
-    };
-  }, [productos, skuSeleccionadoId, analisisAbastecimiento]);
-
-  const exportarPlanAExcel = () => {
-    const datosPlan = analisisAbastecimiento.listadoMaestroOCs;
-    let csv = "\uFEFF"; 
-    csv += "CRITICIDAD;CÓDIGO SKU;DESCRIPCIÓN;SUGERENCIA CORRIENTE;STOCK FISICO INICIAL;CONSUMO IA SUGERIDO;FECHA SUGERIDA EMISIÓN;MES ESTIMADO QUIEBRE;CANTIDAD A COMPRAR\n";
-
-    datosPlan.forEach(item => {
-      const fila = [
-        `"${item.criticidad}"`,
-        `"${item.code}"`,
-        `"${item.description.replace(/"/g, '""')}"`,
-        `"${item.numeroOrdenTexto}"`,
-        item.stockInicialFisico,
-        item.promedioConsumo,
-        `"${item.mesLanzamientoTexto}"`,
-        `"${item.mesQuiebreTexto}"`,
-        item.cantidadAComprar
-      ];
-      csv += fila.join(";") + "\n";
-    });
-
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.setAttribute("download", `Plan_Cronologia_CierreAño_${AÑO_ACTUAL}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
+  const familiasUnicas = useMemo(() => {
+    return Array.from(new Set(productos.map(p => p.family).filter(Boolean)));
+  }, [productos]);
 
   if (loading) return (
-    <div className="min-h-[50vh] flex items-center justify-center bg-[#f8fafc]">
+    <div className="min-h-[80vh] flex items-center justify-center bg-[#f8fafc]">
       <div className="text-center space-y-2">
-        <div className="w-9 h-9 border-2 border-purple-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
-        <p className="text-[11px] font-black text-slate-400 uppercase tracking-wider">Sincronizando Cronogramas Activos con Algoritmo IA...</p>
+        <div className="w-8 h-8 border-2 border-slate-800 border-t-transparent rounded-full animate-spin mx-auto"></div>
+        <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Ejecutando Modelado Predictivo Ares...</p>
       </div>
     </div>
   );
 
   return (
-    <div className="bg-[#f8fafc] p-3 space-y-4 w-full text-slate-800 font-sans antialiased">
-      
-      {/* CUADRO PRINCIPAL */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-100 pb-3 gap-2">
-          <div>
-            <div className="flex items-center gap-2 text-xs font-black text-slate-900 uppercase tracking-wider">
-              <ShoppingCart className="text-purple-600" size={14} />
-              <span>Cronograma Maestro de Órdenes de Compra (Cierre de Año)</span>
+    <div className="bg-[#f8fafc] min-h-screen text-slate-800 antialiased font-sans">
+      <header className="bg-white border-b border-slate-200 p-5">
+        <div className="flex items-center gap-2 text-slate-900 font-bold text-base tracking-tight">
+          <TrendingUp size={18} className="text-purple-600" />
+          <span>Módulo de Planeamiento Predictivo de Compra</span>
+        </div>
+      </header>
+
+      <main className="p-5 space-y-4 max-w-[1920px] mx-auto">
+        {/* FILTROS */}
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap gap-4 items-end">
+          <div className="flex-1 min-w-[320px]">
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Buscador por Código</label>
+            <div className="relative">
+              <Search className="absolute left-3 top-2.5 text-slate-400" size={14} />
+              <input 
+                type="text" 
+                placeholder="Buscar SKU..." 
+                className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-medium outline-none focus:bg-white"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
             </div>
-            <p className="text-[10px] text-slate-400 font-medium uppercase">Emisión de OCs calculadas siempre un mes antes de cumplir el Lead Time crítico del quiebre.</p>
           </div>
-          
-          <button
-            onClick={exportarPlanAExcel}
-            className="flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] px-3 py-1.5 rounded-lg shadow-sm transition-all uppercase tracking-wider self-start sm:self-auto"
-          >
-            <FileSpreadsheet size={13} />
-            Exportar Líneas a Excel
-          </button>
+
+          <div className="w-52">
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Vista de Catálogo</label>
+            <select 
+              className={`w-full border p-2 rounded-lg text-[11px] font-bold cursor-pointer outline-none ${mostrarOcultos ? "bg-amber-50 border-amber-300 text-amber-800" : "bg-slate-50 border-slate-200 text-slate-800"}`}
+              value={mostrarOcultos ? "OCULTOS" : "ACTIVOS"}
+              onChange={(e) => setMostrarOcultos(e.target.value === "OCULTOS")}
+            >
+              <option value="ACTIVOS">🟢 SKU ACTIVOS</option>
+              <option value="OCULTOS">⚫ SKUS ARCHIVADOS</option>
+            </select>
+          </div>
+
+          <div className="w-52">
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Familia</label>
+            <select 
+              className="w-full bg-slate-50 border border-slate-200 p-2 rounded-lg text-[11px] font-bold cursor-pointer"
+              value={filtroFamilia}
+              onChange={(e) => setFiltroFamilia(e.target.value)}
+            >
+              <option value="TODOS">TODAS</option>
+              {familiasUnicas.map(f => <option key={f} value={f}>{f.toUpperCase()}</option>)}
+            </select>
+          </div>
+
+          <div className="w-52">
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Alertas</label>
+            <select 
+              className="w-full bg-slate-50 border border-slate-200 p-2 rounded-lg text-[11px] font-bold cursor-pointer"
+              value={filtroEstado}
+              onChange={(e) => setFiltroEstado(e.target.value)}
+            >
+              <option value="TODOS">TODOS</option>
+              <option value="COMPRAR YA">🚨 COMPRAR YA</option>
+              <option value="POR REVISAR">⚠️ POR REVISAR</option>
+              <option value="STOCK OK">✅ STOCK OK</option>
+            </select>
+          </div>
         </div>
 
-        {/* SELECTORES DE FILTRO */}
-        <div className="flex flex-wrap gap-2 text-[10px] font-bold">
-          <button 
-            onClick={() => setFiltroCriticidad("TODOS")}
-            className={`px-3 py-1.5 rounded-lg border transition-all ${filtroCriticidad === "TODOS" ? 'bg-slate-900 text-white border-slate-900 shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
-          >
-            Todos los Activos ({analisisAbastecimiento.listadoMaestroOCs.length})
-          </button>
-          
-          <button 
-            onClick={() => setFiltroCriticidad("CRITICO")}
-            className={`px-3 py-1.5 rounded-lg border transition-all flex items-center gap-1.5 ${filtroCriticidad === "CRITICO" ? 'bg-rose-600 text-white border-rose-600 shadow-sm' : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'}`}
-          >
-            <AlertTriangle size={12} />
-            🚨 EMITIR INMEDIATO ({conteoEstatus.criticos})
-          </button>
+        {/* METRICAS */}
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+          <div className="bg-slate-900 text-white p-4 rounded-xl border border-slate-800 shadow-sm">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Stock Físico Consolidado</p>
+            <p className="text-xl font-black mt-1 text-slate-100">{resumenMétricas.stockTotal.toLocaleString()} <span className="text-[10px] font-normal text-slate-400">unidades</span></p>
+          </div>
 
-          <button 
-            onClick={() => setFiltroCriticidad("PLANIFICADO")}
-            className={`px-3 py-1.5 rounded-lg border transition-all flex items-center gap-1.5 ${filtroCriticidad === "PLANIFICADO" ? 'bg-amber-500 text-white border-amber-500 shadow-sm' : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'}`}
-          >
-            🗓️ EMISIONES CRONOGRAMADAS ({conteoEstatus.planificados})
-          </button>
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider text-blue-600">Arribos Inyectados Total</p>
+            <p className="text-xl font-black mt-1 text-blue-900">{resumenMétricas.arribosTotal.toLocaleString()} <span className="text-[10px] font-normal text-slate-400">unidades</span></p>
+          </div>
 
-          <button 
-            onClick={() => setFiltroCriticidad("OPTIMO")}
-            className={`px-3 py-1.5 rounded-lg border transition-all flex items-center gap-1.5 ${filtroCriticidad === "OPTIMO" ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm' : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'}`}
-          >
-            <CheckCircle2 size={12} />
-            CON STOCK SEGURO ({conteoEstatus.optimos})
-          </button>
+          <div className="bg-purple-50 p-4 rounded-xl border border-purple-200 shadow-sm">
+            <p className="text-[10px] font-bold text-purple-500 uppercase tracking-wider">Consumo Promedio</p>
+            <p className="text-xl font-black mt-1 text-purple-900">{Math.round(resumenMétricas.promedioConsumoIA).toLocaleString()} <span className="text-[10px] font-normal text-purple-500">u/m</span></p>
+          </div>
+
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Cobertura Promedio</p>
+            <p className="text-xl font-black mt-1 text-slate-900">{resumenMétricas.promedioCobertura.toFixed(1)} <span className="text-[10px] font-normal text-slate-400">Meses</span></p>
+          </div>
+
+          <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-200 shadow-sm">
+            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Total Punto ROP</p>
+            <p className="text-xl font-black mt-1 text-emerald-900">{Math.round(resumenMétricas.ropTotal).toLocaleString()} <span className="text-[10px] font-normal text-emerald-500">unidades</span></p>
+          </div>
         </div>
 
-        {/* REPORTE TABULAR DETALLADO */}
-        <div className="max-h-[350px] overflow-y-auto border border-slate-200 rounded-lg shadow-inner bg-slate-50">
-          <table className="w-full text-left border-collapse text-[10px] bg-white">
-            <thead className="sticky top-0 bg-slate-100 z-10 shadow-sm">
-              <tr className="text-slate-400 uppercase tracking-wider font-black text-[9px] border-b border-slate-200">
-                <th className="p-2.5">Mes Emisión OC</th>
-                <th className="p-2.5">SKU Código</th>
-                <th className="p-2.5">Descripción del Material</th>
-                <th className="p-2.5 text-center">N° Sugerencia</th>
-                <th className="p-2.5 text-center bg-slate-50/50">Stock Físico</th>
-                <th className="p-2.5 text-center bg-slate-50/50">Consumo AI (+25%)</th>
-                <th className="p-2.5 text-center">Mes Est. Quiebre</th>
-                <th className="p-2.5 text-right text-purple-700 font-black">Cantidad a Emitir</th>
-                <th className="p-2.5 text-center">Línea Temporal</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
-              {ocsFiltradas.map((oc, idx: number) => (
-                <tr key={`${oc.id}-${idx}`} className="hover:bg-slate-50/80 transition-colors">
-                  <td className="p-2.5">
-                    <span className={`px-2 py-0.5 rounded text-[9px] font-black border uppercase ${
-                      oc.criticidad === 'CRITICO' ? 'bg-rose-100 text-rose-700 border-rose-300' : 
-                      oc.criticidad === 'PLANIFICADO' ? 'bg-amber-50 text-amber-700 border-amber-200' : 
-                      oc.criticidad === 'FUTURO' ? 'bg-slate-100 text-slate-600 border-slate-200' :
-                      'bg-emerald-50 text-emerald-700 border-emerald-200'
-                    }`}>
-                      {oc.criticidad === 'CRITICO' ? "🚨 EMITIR YA" : oc.mesLanzamientoTexto}
-                    </span>
-                  </td>
-                  <td className="p-2.5 font-bold text-slate-900">{oc.code}</td>
-                  <td className="p-2.5 uppercase max-w-[200px] truncate text-slate-500 font-medium">{oc.description}</td>
-                  <td className="p-2.5 text-center">
-                    <span className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-600 font-bold text-[9px]">
-                      {oc.numeroOrdenTexto}
-                    </span>
-                  </td>
-                  <td className="p-2.5 text-center font-bold text-slate-900 bg-slate-50/30">{oc.stockInicialFisico.toLocaleString()} un.</td>
-                  <td className="p-2.5 text-center text-purple-900 font-bold bg-purple-50/20">{oc.promedioConsumo.toLocaleString()} u/mes</td>
-                  <td className="p-2.5 text-center">
-                    <span className={`font-bold ${oc.cantidadAComprar === 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                      {oc.mesQuiebreTexto}
-                    </span>
-                  </td>
-                  <td className="p-2.5 text-right font-black text-slate-950 text-xs">
-                    {oc.cantidadAComprar > 0 ? `${oc.cantidadAComprar.toLocaleString()} un.` : "—"}
-                  </td>
-                  <td className="p-2.5 text-center">
-                    <button 
-                      onClick={() => {
-                        setSkuSeleccionadoId(oc.product_uuid);
-                        setBusqueda(`[${oc.code}] ${oc.description}`);
-                        setMostrarDropdown(false);
-                      }}
-                      className="text-purple-600 hover:text-purple-900 font-bold underline flex items-center justify-center gap-0.5 mx-auto text-[9px]"
-                    >
-                      Ver Curva <ArrowRight size={10} />
-                    </button>
-                  </td>
+        {/* TABLA AGRUPADA POR FAMILIA */}
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto w-full max-h-[700px] custom-scrollbar">
+            <table className="w-full text-left border-collapse min-w-[1950px]">
+              <thead>
+                <tr className="bg-[#0f172a] text-slate-200 font-semibold text-[11px] tracking-wider uppercase sticky top-0 z-20 whitespace-nowrap">
+                  <th className="p-3 w-36 border-b border-slate-700">Código</th>
+                  <th className="p-3 min-w-[280px] max-w-[340px] border-b border-slate-700">Descripción</th>
+                  <th className="p-3 text-center w-24 border-b border-slate-700">L. Time</th>
+                  <th className="p-3 text-right w-24 border-b border-slate-700">Stock</th>
+                  <th className="p-3 text-right w-24 border-b border-slate-700">Arribos</th>
+                  <th className="p-3 text-right w-32 border-b border-slate-700 bg-purple-950 text-purple-300 font-black">Promedio</th>
+                  <th className="p-3 text-center w-24 border-b border-slate-700 bg-slate-900 text-blue-300">Cobertura</th>
+                  <th className="p-3 text-center w-24 border-b border-slate-700">Quiebre</th>
+                  <th className="p-3 text-center w-28 border-b border-slate-700">Fecha OC</th>
+                  <th className="p-3 text-right w-28 border-b border-slate-700 bg-slate-900 text-emerald-300 font-bold">Punto ROP</th>
+                  {mesesHeaders.map(m => (
+                    <th key={m.id} className="p-3 text-center w-40 font-medium border-l border-slate-800 bg-slate-900/50 text-slate-200">
+                      {m.nombre} '{String(m.año).slice(-2)}
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-[11px]">
+                {Object.keys(dataAgrupadaPorFamilia).map((familia) => (
+                  <Fragment key={`group-container-${familia}`}>
+                    <tr className="bg-slate-100/80 font-bold text-slate-700 tracking-wide">
+                      <td colSpan={10 + mesesHeaders.length} className="p-2.5 pl-4 border-y border-slate-200">
+                        <span className="inline-flex items-center gap-2 text-[11px] uppercase text-slate-900 font-black">
+                          <Layers size={13} className="text-purple-600" />
+                          FAMILIA: {familia} 
+                          <span className="text-[10px] font-normal text-slate-500 normal-case bg-white border border-slate-200 px-2 py-0.5 rounded-full ml-1">
+                            {dataAgrupadaPorFamilia[familia].length} {dataAgrupadaPorFamilia[familia].length === 1 ? 'SKU detectado' : 'SKUs detectados'}
+                          </span>
+                        </span>
+                      </td>
+                    </tr>
+                    {dataAgrupadaPorFamilia[familia].map((row) => {
+                      let colorAlerta = "bg-emerald-50 text-emerald-700 border-emerald-200";
+                      if (row.estado === "COMPRAR YA") colorAlerta = "bg-red-50 text-red-700 border-red-200 font-bold animate-pulse";
+                      if (row.estado === "POR REVISAR") colorAlerta = "bg-amber-50 text-amber-700 border-amber-200 font-semibold";
+                      if (row.estado === "SIN MOVIMIENTO") colorAlerta = "bg-slate-50 text-slate-400 border-slate-200";
 
-      {/* SECCIÓN MONITOR GRAFICO COMPACTO */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-4">
-        <div className="bg-slate-50 p-2 rounded-lg border border-slate-200 relative">
-          <label className="text-[8px] font-black text-slate-400 uppercase tracking-wider block mb-1">Buscador Activo por SKU para Simulación Escalada</label>
-          <input
-            type="text"
-            className="w-full px-3 py-1 bg-white border border-slate-200 rounded-md text-[10px] font-semibold text-slate-900 outline-none focus:border-purple-600"
-            value={busqueda}
-            onChange={(e) => { setBusqueda(e.target.value); setMostrarDropdown(true); }}
-            onFocus={() => setMostrarDropdown(true)}
-            placeholder="Escribe el código del producto..."
-          />
-
-          {mostrarDropdown && productos.length > 0 && (
-            <div className="absolute z-50 w-full left-0 mt-1 bg-white border border-slate-200 rounded-md shadow-lg max-h-[140px] overflow-y-auto text-[10px]">
-              {productos.filter(p => p.code.toLowerCase().includes(busqueda.toLowerCase()) || p.description.toLowerCase().includes(busqueda.toLowerCase())).map((p) => (
-                <div
-                  key={p.id}
-                  className="p-2 hover:bg-slate-50 border-b border-slate-100 cursor-pointer flex justify-between items-center"
-                  onClick={() => { setSkuSeleccionadoId(p.id); setBusqueda(`[${p.code}] ${p.description}`); setMostrarDropdown(false); }}
-                >
-                  <div>
-                    <span className="font-bold text-slate-900">SKU: {p.code}</span>
-                    <p className="text-[9px] text-slate-400 uppercase truncate max-w-[500px]">{p.description}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {analisisSku && (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-1.5 text-[10px]">
-              <div className="flex items-center gap-1 font-black text-slate-900 uppercase">
-                <ChartIcon size={12} className="text-purple-600" />
-                <span>Escalera de Abastecimiento Proyectada (Consumo IA con +25%): {analisisSku.code}</span>
-              </div>
-              <div className="font-bold text-slate-400 uppercase">
-                Lead Time: <span className="text-slate-900 font-black">{analisisSku.lead_time} días</span>
-              </div>
-            </div>
-
-            <div className="w-full h-[220px] text-[9px] font-bold">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={analisisSku.proyeccionesPorMes} margin={{ top: 20, right: 10, left: -30, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="colorStockPlan" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.15}/>
-                      <stop offset="95%" stopColor="#4f46e5" stopOpacity={0.01}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis dataKey="mes" tickLine={false} stroke="#94a3b8" />
-                  <YAxis tickLine={false} stroke="#94a3b8" />
-                  <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderRadius: '4px', color: '#f8fafc', fontSize: '10px' }} />
-                  
-                  <ReferenceLine y={0} stroke="#cbd5e1" strokeWidth={1} />
-                  <Area type="monotone" dataKey="stockProyectado" name="Inventario Proyectado" stroke="#4f46e5" strokeWidth={2} fillOpacity={1} fill="url(#colorStockPlan)" />
-
-                  {/* Renderizar ingresos simulados */}
-                  {analisisSku.proyeccionesPorMes.map((p: any, idx: number) => {
-                    const totalIngreso = (p.cantidadArribo || 0) + (p.cantidadIngresoSimulado || 0);
-                    if (totalIngreso > 0) {
                       return (
-                        <ReferenceLine key={`ingreso-cont-${idx}`} x={p.mes} stroke="#10b981" strokeWidth={1.2}>
-                          <Label value={`+${totalIngreso.toLocaleString()} UN`} position="insideTopLeft" fill="#047857" fontSize={7} fontStyle="bold" />
-                        </ReferenceLine>
+                        <tr key={row.id} className="hover:bg-slate-50/80 group transition-colors whitespace-nowrap">
+                          <td className="p-3 font-mono text-slate-900 font-bold">
+                            <div className="flex items-center gap-2">
+                              {row.active ? (
+                                <button 
+                                  onClick={() => deshabilitarYArchivarSku(row.id, row.code)}
+                                  className="opacity-0 group-hover:opacity-100 p-1 hover:bg-slate-200 rounded transition-all text-slate-400 hover:text-red-600"
+                                  title="Archivar SKU"
+                                >
+                                  <EyeOff size={12} />
+                                </button>
+                              ) : (
+                                <button 
+                                  onClick={() => reestablecerSku(row.id, row.code)}
+                                  className="p-1 bg-amber-100 hover:bg-amber-200 rounded text-amber-800 flex items-center gap-1"
+                                  title="Restaurar SKU"
+                                >
+                                  <Eye size={12} />
+                                </button>
+                              )}
+                              <span className={!row.active ? "line-through text-slate-400" : ""}>{row.code}</span>
+                            </div>
+                          </td>
+
+                          <td className="p-3 truncate max-w-[340px] font-medium text-slate-600" title={row.description}>
+                            {row.description}
+                          </td>
+
+                          <td className="p-3 text-center font-medium text-slate-500">
+                            {row.lead_time}
+                          </td>
+
+                          <td className="p-4 text-right font-bold text-slate-900 bg-slate-50/40">
+                            {row.stockFisico.toLocaleString()}
+                          </td>
+
+                          <td className="p-3 text-right font-medium text-blue-700 bg-blue-50/10">
+                            {row.enTránsito > 0 ? (
+                              <span className="inline-flex items-center gap-1">
+                                <Ship size={13} className="text-blue-600" />
+                                {row.enTránsito.toLocaleString()}
+                              </span>
+                            ) : (
+                              <span className="text-slate-300">---</span>
+                            )}
+                          </td>
+
+                          <td className="p-4 text-right font-bold bg-purple-50/40 text-purple-950 border-r border-purple-100">
+                            {row.consumoIA > 0 ? `${Math.round(row.consumoIA).toLocaleString()} u/m` : "0"}
+                          </td>
+
+                          <td className="p-3 text-center bg-slate-50/50">
+                            <span className={`px-2 py-0.5 rounded-full text-[13px] font-bold ${colorAlerta}`}>
+                              {row.coberturaMeses > 99 ? "∞" : `${row.coberturaMeses.toFixed(1)} m`}
+                            </span>
+                          </td>
+
+                          <td className="p-3 text-center font-bold">
+                            {row.mesQuiebre === "OK" ? (
+                              <span className="text-emerald-600 text-[10px] font-black">OK</span>
+                            ) : (
+                              <span className="text-red-600 bg-red-50 px-1.5 py-0.5 rounded text-[10px] font-black border border-red-100">{row.mesQuiebre}</span>
+                            )}
+                          </td>
+
+                          <td className="p-3 text-center text-[13px] font-mono font-semibold text-slate-500">
+                            {row.fechaLimiteOCStr === "---" ? (
+                              <span className="text-slate-600">---</span>
+                            ) : (
+                              <span className={row.estado === "COMPRAR YA" ? "text-red-700 font-bold" : "text-slate-600"}>
+                                {row.fechaLimiteOCStr}
+                              </span>
+                            )}
+                          </td>
+
+                          <td className="p-3 text-right font-black bg-emerald-50/30 text-emerald-900 border-r border-slate-200">
+                            {row.puntoRop > 0 ? (
+                              <span className="inline-flex items-center gap-1 text-emerald-700">
+                                <ArrowDownToLine size={12} className="text-emerald-500" />
+                                {Math.round(row.puntoRop).toLocaleString()}
+                              </span>
+                            ) : (
+                              <span className="text-slate-300 font-normal">---</span>
+                            )}
+                          </td>
+
+                          {/* Renderizado Dinámico Separado por Tipo de Arribo */}
+                          {row.proyeccionesPorMes.map((mesProj: any, idx: number) => {
+                            const tieneArriboReal = mesProj.arriboInyectadoReal > 0;
+                            const tieneSugerenciaSimulada = mesProj.arriboSimuladoAlgoritmo > 0;
+
+                            return (
+                              <td 
+                                key={`${row.id}-mes-${idx}`} 
+                                className="p-2 border-l border-slate-100 font-mono text-[10px] align-top bg-white group-hover:bg-slate-50/50"
+                              >
+                                <div className="flex flex-col gap-1">
+                                  {/* Fila de Stock Neto Proyectado */}
+                                  <div className="flex justify-between border-b border-slate-100 pb-0.5">
+                                    <span className="text-slate-400">Stock:</span>
+                                    <span className={`font-bold ${mesProj.stockFinal === 0 ? "text-red-500" : "text-slate-700"}`}>
+                                      {Math.round(mesProj.stockFinal).toLocaleString()}
+                                    </span>
+                                  </div>
+
+                                  {/* Bloque Arribos Programados (Tus Inyecciones Reales) */}
+                                  {tieneArriboReal ? (
+                                    <div className="flex justify-between items-center bg-blue-50 px-1 py-0.5 rounded text-blue-700 font-bold" title="Arribo programado real">
+                                      <span className="flex items-center gap-0.5 text-[9px]"><Ship size={10}/> Real:</span>
+                                      <span>+{Math.round(mesProj.arriboInyectadoReal).toLocaleString()}</span>
+                                    </div>
+                                  ) : (
+                                    <div className="h-3"></div>
+                                  )}
+
+                                  {/* Bloque Simulación Teórica de Compras por Hueco de Abastecimiento */}
+                                  {tieneSugerenciaSimulada ? (
+                                    <div className="flex justify-between items-center bg-purple-50 border border-purple-200 px-1 py-0.5 rounded text-purple-700 font-black animate-pulse" title="Sugerencia simulada por quiebre de stock">
+                                      <span className="flex items-center gap-0.5 text-[9px]"><Sparkles size={10}/> Sugerido:</span>
+                                      <span>+{Math.round(mesProj.arriboSimuladoAlgoritmo).toLocaleString()}</span>
+                                    </div>
+                                  ) : (
+                                    <div className="h-3"></div>
+                                  )}
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
                       );
-                    }
-                    return null;
-                  })}
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
+                    })}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
           </div>
-        )}
-      </div>
+        </div>
+      </main>
     </div>
   );
 }
